@@ -1,0 +1,229 @@
+# AICounsel 프로젝트 구조 및 환경 설정
+
+## 1. 개발 환경
+- OS: Windows 10 (10.0.19045)
+- Python: 3.10
+- Node.js: v20.9.0
+- npm: 10.2.4
+- MongoDB: 최신 버전 (Community Edition)
+
+## 2. 설치된 패키지
+
+### Backend (Python packages)
+- fastapi: 웹 API 프레임워크
+- uvicorn: ASGI 서버
+- motor: MongoDB 비동기 드라이버
+- pydantic: 데이터 검증
+- pydantic-settings: 설정 관리
+- python-dotenv: 환경변수 관리
+- langchain (0.3.25): LLM 통합 프레임워크
+- llama-cpp-python (0.3.9): Llama 모델 실행
+- sentence-transformers (4.1.0): 텍스트 임베딩
+- huggingface_hub (0.32.4): 모델 다운로드
+
+### Frontend (Node.js packages)
+- next: 14.2.29 (App Router)
+- react: 최신 버전
+- @mui/material: Material-UI 컴포넌트
+- @emotion/styled: 스타일링
+- socket.io-client: 실시간 통신
+
+## 3. 프로젝트 구조
+
+### Backend (/backend)
+- /app
+  - /api
+    - /v1
+      - chat.py: 채팅 API 엔드포인트
+  - /models
+    - chat.py: 채팅 관련 Pydantic 모델
+    - schemas.py: MongoDB 스키마 정의
+  - /services
+    - chat_service.py: 채팅 서비스 로직
+    - llm_service.py: LLM 통합 서비스
+  - config.py: 환경 설정
+  - database.py: MongoDB 연결 관리
+  - main.py: FastAPI 애플리케이션
+
+### Frontend (/frontend)
+- /src
+  - /app
+    - /chat
+      - page.tsx: 채팅 인터페이스
+  - /components: 재사용 컴포넌트
+  - /styles: 스타일 정의
+
+### Models (/models)
+- llama-2-7b-chat.Q4_K_M.gguf: Llama2 채팅 모델 (4.08GB)
+
+## 4. 데이터베이스 구조 (MongoDB)
+
+### Collections
+1. conversations
+   - session_id: 세션 식별자
+   - messages: 대화 내용 배열
+   - created_at: 생성 시간
+   - updated_at: 수정 시간
+   - status: 대화 상태
+
+2. users
+   - client_id: 고객사 ID
+   - phone: 전화번호
+   - name: 이름
+   - created_at: 가입일
+   - last_login: 마지막 로그인
+
+3. faqs
+   - question: 질문
+   - answer: 답변
+   - category: 카테고리
+   - keywords: 검색 키워드
+
+4. service_requests
+   - type: 요청 유형
+   - status: 처리 상태
+   - description: 요청 내용
+   - schedule_date: 예약 날짜
+
+## 5. API 엔드포인트
+
+### Chat API
+- POST /api/v1/chat: 새 메시지 전송
+- GET /api/v1/chat/history/{session_id}: 대화 이력 조회
+
+## 6. 실행 방법
+1. Backend: uvicorn app.main:app --reload (port 8000)
+2. Frontend: npm run dev (port 3000)
+3. MongoDB: 자동 실행 (port 27017)
+
+## 7. 향후 설치 예정
+- OpenAI API 연동
+- 음성 처리 (Whisper)
+- 이미지 처리
+- PDF 처리 
+
+## 8. 설치 이력 (Installation History)
+
+### 2024-03-xx 초기 설정
+1. Python 가상환경 생성
+   - python -m venv venv
+   - 목적: 프로젝트 격리된 Python 환경 구성
+
+2. 기본 패키지 설치
+   - pip install fastapi uvicorn
+   - 버전: fastapi (0.109.2), uvicorn (0.27.1)
+   - 목적: 백엔드 API 서버 구축
+
+3. MongoDB 관련
+   - pip install motor pymongo
+   - 버전: motor (3.3.2), pymongo (4.6.1)
+   - 목적: MongoDB 비동기 연결 및 조작
+
+4. 환경설정 관련
+   - pip install python-dotenv pydantic pydantic-settings
+   - 버전: python-dotenv (1.0.1), pydantic (2.11.5), pydantic-settings (2.2.1)
+   - 목적: 환경변수 및 설정 관리
+
+### 2024-03-xx Frontend 설정
+1. Next.js 프로젝트 생성
+   - npx create-next-app@latest frontend
+   - 버전: next (14.2.29)
+   - 목적: 프론트엔드 프레임워크 설정
+
+2. Material-UI 설치
+   - npm install @mui/material @emotion/react @emotion/styled
+   - 버전: @mui/material (5.15.11), @emotion/react (11.11.3), @emotion/styled (11.11.0)
+   - 목적: UI 컴포넌트 및 스타일링
+
+### 2024-03-xx LLM 관련
+1. LangChain 및 관련 도구
+   - pip install langchain==0.3.25 llama-cpp-python==0.3.9 sentence-transformers==4.1.0
+   - 목적: LLM 통합 및 텍스트 처리
+
+2. Hugging Face 도구
+   - pip install huggingface_hub==0.32.4
+   - 목적: LLM 모델 다운로드
+
+3. 다운로드한 모델
+   - 파일: llama-2-7b-chat.Q4_K_M.gguf
+   - 크기: 4.08GB
+   - 위치: D:\AICounsel\models
+   - 목적: CPU에서 실행 가능한 량자화된 LLM 모델
+
+4. LangChain Community
+   - pip install langchain-community==0.3.24
+   - 목적: LangChain 확장 기능 사용
+   - 설치일: 2024-03-xx
+
+### 수동 설치 항목
+1. MongoDB Community Server
+   - 다운로드: MongoDB 공식 웹사이트
+   - 설정: Windows 서비스로 자동 실행
+   - 목적: 데이터베이스 서버
+
+2. MongoDB Compass
+   - 다운로드: MongoDB 공식 웹사이트
+   - 목적: 데이터베이스 GUI 관리 도구 
+
+AICounsel Project Structure
+
+Directory Structure:
+D:\AICounsel\
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   ├── core/
+│   │   ├── models/
+│   │   ├── routers/
+│   │   ├── scripts/
+│   │   └── services/
+│   └── requirements.txt
+├── frontend/
+├── data/
+│   ├── csv/
+│   ├── raw/
+│   └── processed/
+└── venv/
+
+Requirements:
+- Python 3.10
+- FastAPI
+- uvicorn
+- pydantic
+- python-dotenv
+- pymongo
+- pandas
+- tqdm
+- python-dateutil
+- pytz
+- tzdata
+- konlpy
+- matplotlib
+- seaborn
+- JPype1
+- lxml
+- contourpy
+- cycler
+- fonttools
+- kiwisolver
+- pyparsing
+- soynlp
+- numpy
+- scipy
+- scikit-learn
+- joblib
+- threadpoolctl
+- psutil
+
+Database:
+- MongoDB (local)
+
+Development Environment:
+- Windows 10
+- Python Virtual Environment (venv)
+- VS Code
+
+Notes:
+- Data directory is git-ignored
+- MongoDB runs locally
+- Frontend uses Next.js 

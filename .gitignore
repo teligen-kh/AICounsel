@@ -1,25 +1,30 @@
+# Data directories
+data/
+data/csv/
+data/raw/
+data/processed/
+
 # Python
-venv/
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+venv/
+ENV/
+env/
+.env
+
+# Node
+node_modules/
+.next/
+out/
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # IDE
 .idea/
@@ -27,31 +32,20 @@ wheels/
 *.swp
 *.swo
 
-# Environment
-.env
-.env.local
-.env.*.local
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+mongodb/data/
+models/
+tools/
+*.log
+*.msi
+*.exe
+*.pdb
+*.gguf
 
 # Logs
 *.log
-logs/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Dependencies
-node_modules/
-package-lock.json
-yarn.lock
-
-# Build
-.next/
-out/
-build/
-dist/
-
-# Testing
-coverage/
-.coverage
-htmlcov/
-.pytest_cache/ 
+logs/ 

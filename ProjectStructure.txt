@@ -155,6 +155,16 @@
    - 목적: LangChain 확장 기능 사용
    - 설치일: 2024-03-xx
 
+### 2024-03-xx 자연어 처리 관련
+1. soynlp 설치
+   - pip install soynlp
+   - 목적: 한국어 자연어 처리 (명사 추출)
+   - 적용: backend/app/api/analysis.py의 키워드 분석 로직 개선
+   - 변경사항: 
+     * Okt 대신 soynlp의 LTokenizer와 WordExtractor 사용
+     * 불용어 목록 확장 및 최적화
+     * 명사 추출 정확도 향상
+
 ### 수동 설치 항목
 1. MongoDB Community Server
    - 다운로드: MongoDB 공식 웹사이트

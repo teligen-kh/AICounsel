@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { MessageSquare, BarChart2, Home } from 'lucide-react';
+import { MessageSquare, BarChart2, Home, List } from 'lucide-react';
 
 export function Navbar() {
   const pathname = usePathname();
@@ -24,6 +24,11 @@ export function Navbar() {
       href: '/analysis',
       icon: BarChart2,
     },
+    {
+      name: '상담 리스트',
+      href: '/list',
+      icon: List,
+    },
   ];
 
   return (
@@ -32,7 +37,7 @@ export function Navbar() {
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center">
             <Link href="/" className="text-xl font-bold text-gray-900">
-              AI 상담 분석
+              AI 상담 관리센터
             </Link>
           </div>
           

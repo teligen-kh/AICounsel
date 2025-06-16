@@ -34,6 +34,7 @@ pip install -r requirements.txt
 cd frontend
 npm install
 ```
+> Note: `npm install` 명령어는 `node_modules` 폴더를 생성하고 필요한 모든 의존성을 설치합니다. 이 과정은 처음 한 번만 필요하며, 설치에는 몇 분 정도 소요될 수 있습니다.
 
 #### MongoDB 설정
 1. MongoDB 설치 후 데이터 디렉토리 생성:
@@ -97,7 +98,8 @@ AICounsel/
 │   └── requirements.txt # Python 의존성
 ├── frontend/            # Next.js 프론트엔드
 │   ├── src/            # 소스 코드
-│   └── package.json    # Node.js 의존성
+│   ├── node_modules/   # Node.js 의존성 (npm install로 생성)
+│   └── package.json    # Node.js 의존성 정의
 ├── mongodb/            # MongoDB 설정
 └── tools/              # 설치 파일들
 ```

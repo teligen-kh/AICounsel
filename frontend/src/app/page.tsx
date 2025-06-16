@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
-import { MessageSquare, BarChart2 } from 'lucide-react';
+import { MessageSquare, BarChart2, List } from 'lucide-react';
 
 export default function HomePage() {
   return (
@@ -17,7 +17,7 @@ export default function HomePage() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+        <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
           <Link href="/chat" className="block">
             <Card className="p-8 hover:shadow-lg transition-shadow duration-300 h-full">
               <div className="flex flex-col items-center text-center">
@@ -47,6 +47,23 @@ export default function HomePage() {
                 <p className="text-gray-600">
                   기간별 상담 데이터를 분석하고 통계를 확인하세요.
                   대화 패턴과 키워드를 통해 인사이트를 얻을 수 있습니다.
+                </p>
+              </div>
+            </Card>
+          </Link>
+
+          <Link href="/list" className="block">
+            <Card className="p-8 hover:shadow-lg transition-shadow duration-300 h-full">
+              <div className="flex flex-col items-center text-center">
+                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mb-6">
+                  <List className="w-8 h-8 text-purple-600" />
+                </div>
+                <h2 className="text-2xl font-semibold text-gray-900 mb-4">
+                  상담 리스트
+                </h2>
+                <p className="text-gray-600">
+                  이전 상담 내역을 검색하고 확인하세요.
+                  날짜와 키워드로 원하는 상담을 찾아볼 수 있습니다.
                 </p>
               </div>
             </Card>

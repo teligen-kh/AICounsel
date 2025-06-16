@@ -46,6 +46,18 @@ class ConversationParser:
                     utterances.append(utterance)
         return utterances
 
+    @staticmethod
+    def extract_datetime_from_filename(filename: str) -> datetime:
+        """CSV 파일명에서 날짜와 시간을 추출"""
+        # 파일명에서 숫자 부분 추출 (예: 314.01071547275.20240919174442.csv)
+        match = re.search(r'(\d{8})(\d{6})', filename)
+        if match:
+            date_str, time_str = match.groups()
+            # YYYYMMDDHHMMSS 형식으로 변환
+            datetime_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}:{time_str[4:6]}"
+            return datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+        return None
+
 class BulkCSVImporter:
     def __init__(self, mongo_uri="mongodb://localhost:27017", db_name="aicounsel"):
         self.client = MongoClient(mongo_uri)
@@ -64,52 +76,60 @@ class BulkCSVImporter:
         
         for csv_file in tqdm(csv_files, desc="CSV 파일 처리 중"):
             try:
+                # 파일명에서 실제 상담 시간 추출
+                consultation_datetime = ConversationParser.extract_datetime_from_filename(csv_file)
+                if not consultation_datetime:
+                    logging.warning(f"파일명에서 날짜/시간을 추출할 수 없습니다: {csv_file}")
+                    continue
+
                 file_path = os.path.join(directory_path, csv_file)
+                df = pd.read_csv(file_path, encoding='utf-8')
                 
-                # CSV 파일 읽기
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
+                # 대화 내용 파싱
+                messages = []
+                for _, row in df.iterrows():
+                    if 'content' in row:
+                        content = str(row['content'])
+                        if content.strip():
+                            # 발화자 구분 (고객/상담사)
+                            if '고객' in content:
+                                role = 'human'
+                            else:
+                                role = 'assistant'
+                            
+                            messages.append({
+                                'type': role,
+                                'content': content.strip()
+                            })
                 
-                # 대화 파싱
-                utterances = ConversationParser.parse_conversation(content)
-                
-                if utterances:
-                    # 대화 문서 생성
+                if messages:
+                    # MongoDB에 저장
                     conversation = {
-                        'id': str(uuid.uuid4()),
-                        'title': os.path.splitext(csv_file)[0],
+                        'session_id': str(uuid.uuid4()),
+                        'messages': messages,
                         'created_at': datetime.now(),
-                        'utterances': utterances,
-                        'summary': None,  # 나중에 LLM으로 요약 생성
-                        'category': None,  # 나중에 분류
-                        'tags': []
+                        'updated_at': datetime.now(),
+                        'consultation_datetime': consultation_datetime,  # 실제 상담 시간 추가
+                        'status': 'completed'
                     }
                     
-                    # MongoDB에 삽입
                     self.collection.insert_one(conversation)
-                    logging.info(f"{csv_file} 처리 완료: {len(utterances)}개 발화 삽입됨")
-                else:
-                    logging.warning(f"{csv_file}에 유효한 대화가 없습니다.")
-                    
-            except Exception as e:
-                logging.error(f"{csv_file} 처리 중 오류 발생: {str(e)}")
-                continue
+                    logging.info(f"파일 처리 완료: {csv_file}")
                 
+            except Exception as e:
+                logging.error(f"파일 처리 중 오류 발생: {csv_file} - {str(e)}")
+                continue
+        
+        logging.info("모든 파일 처리 완료")
+    
     def close(self):
         """MongoDB 연결 종료"""
         self.client.close()
 
 def main():
-    # 프로젝트 루트 디렉토리 기준으로 상대 경로 설정
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    csv_directory = os.path.join(project_root, "data", "csv")
-    
-    # 디렉토리가 없으면 생성
-    os.makedirs(csv_directory, exist_ok=True)
-    
     importer = BulkCSVImporter()
     try:
-        importer.import_csv_directory(csv_directory)
+        importer.import_csv_directory("data/csv")  # CSV 파일이 있는 디렉토리 경로
     finally:
         importer.close()
 

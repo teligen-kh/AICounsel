@@ -6,7 +6,7 @@ import { AnalysisResults } from '@/components/Analysis/AnalysisResults';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 export default function AnalysisPage() {
   const [dateRange, setDateRange] = useState<{
@@ -28,7 +28,7 @@ export default function AnalysisPage() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/analysis`, {
+      const response = await fetch(`${API_BASE_URL}/analysis`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -40,7 +40,8 @@ export default function AnalysisPage() {
       });
 
       if (!response.ok) {
-        throw new Error('분석 중 오류가 발생했습니다.');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || '분석 중 오류가 발생했습니다.');
       }
 
       const data = await response.json();

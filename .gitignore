@@ -48,4 +48,10 @@ tools/
 
 # Logs
 *.log
-logs/ 
+logs/
+
+# Security - API Keys and Tokens
+huggingface_token.txt
+*_token.txt
+*_key.txt
+api_keys.txt 

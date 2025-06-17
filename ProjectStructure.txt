@@ -20,6 +20,9 @@
 - llama-cpp-python (0.3.9): Llama 모델 실행
 - sentence-transformers (4.1.0): 텍스트 임베딩
 - huggingface_hub (0.32.4): 모델 다운로드
+- transformers (4.52.4): Hugging Face 모델 로드
+- torch (2.7.1): PyTorch 딥러닝 프레임워크
+- accelerate (1.7.0): 모델 가속화
 
 ### Frontend (Node.js packages)
 - next: 14.2.29 (App Router)
@@ -55,6 +58,7 @@
 
 ### Models (/models)
 - llama-2-7b-chat.Q4_K_M.gguf: Llama2 채팅 모델 (4.08GB)
+- Llama-3.1-8B-Instruct/: LLaMA 3.1 8B Instruct 모델 (16GB)
 
 ## 4. 데이터베이스 구조 (MongoDB)
 
@@ -164,6 +168,30 @@
      * Okt 대신 soynlp의 LTokenizer와 WordExtractor 사용
      * 불용어 목록 확장 및 최적화
      * 명사 추출 정확도 향상
+
+### 2025-01-27 LLaMA 3.1 8B Instruct 모델 업그레이드
+1. Hugging Face Transformers 패키지 설치
+   - pip install transformers torch accelerate
+   - 버전: transformers (4.52.4), torch (2.7.1), accelerate (1.7.0)
+   - 목적: LLaMA 3.1 8B Instruct 모델 실행
+
+2. LLaMA 3.1 8B Instruct 모델 다운로드
+   - 모델: meta-llama/Llama-3.1-8B-Instruct
+   - 크기: 16GB
+   - 위치: D:\AICounsel\models\Llama-3.1-8B-Instruct
+   - 목적: 더 정확한 한국어 응답을 위한 최신 모델
+
+3. LLM 서비스 업데이트
+   - 파일: backend/app/services/llm_service.py
+   - 변경사항:
+     * LlamaCpp에서 HuggingFacePipeline로 변경
+     * LLaMA 3.1 형식에 맞는 프롬프트 템플릿 수정
+     * Transformers 기반 모델 로딩 방식 적용
+
+4. Hugging Face 토큰 설정
+   - 토큰명: Teligen_LLaMA_3.1_Down
+   - 권한: READ
+   - 저장위치: huggingface_token.txt (보안 파일)
 
 ### 수동 설치 항목
 1. MongoDB Community Server

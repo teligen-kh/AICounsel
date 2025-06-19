@@ -1,10 +1,5 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
-from langchain_community.llms import HuggingFacePipeline
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
 from langchain_mongodb import MongoDBChatMessageHistory
 from ..config import settings
 import os
@@ -23,36 +18,6 @@ class LLMService:
             device_map="auto",
             trust_remote_code=True
         )
-        
-        # 파이프라인 생성
-        from transformers import pipeline
-        pipe = pipeline(
-            "text-generation",
-            model=self.model,
-            tokenizer=self.tokenizer,
-            max_new_tokens=100,
-            temperature=0.2,
-            top_p=0.2,
-            do_sample=True,
-            pad_token_id=self.tokenizer.eos_token_id
-        )
-        
-        # LangChain 파이프라인으로 변환
-        self.llm = HuggingFacePipeline(pipeline=pipe)
-        
-        # 프롬프트 템플릿 설정
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", "당신은 한국의 IT 기술지원 상담사입니다. 고객의 문제에 공감을 표현하고 구체적인 해결 방법을 제시하세요. 항상 한국어로만 답변하세요."),
-            MessagesPlaceholder(variable_name="history"),
-            ("human", "{input}")
-        ])
-        
-        # 체인 구성
-        self.chain = (
-            self.prompt
-            | self.llm
-            | StrOutputParser()
-        )
 
     async def get_response(self, session_id: str, message: str) -> str:
         try:
@@ -67,24 +32,45 @@ class LLMService:
             # 이전 대화 내용 가져오기
             messages = message_history.messages
             
-            # 응답 생성
-            response = await self.chain.ainvoke({
-                "history": messages,
-                "input": message
-            })
+            # LLaMA 3.1 8B Instruct 형식으로 대화 구성
+            conversation_text = ""
+            for msg in messages:
+                if msg.type == "human":
+                    conversation_text += f"<|im_start|>user\n{msg.content}<|im_end|>\n"
+                elif msg.type == "ai":
+                    conversation_text += f"<|im_start|>assistant\n{msg.content}<|im_end|>\n"
             
-            # 응답에서 태그 제거
-            response = response.replace("<|eot_id|>", "").replace("<|start_header_id|>", "").replace("<|end_header_id|>", "").strip()
+            # 현재 메시지 추가
+            conversation_text += f"<|im_start|>user\n{message}<|im_end|>\n<|im_start|>assistant\n"
             
-            # assistant 태그 이후의 내용만 추출
-            if "assistant" in response:
-                parts = response.split("assistant")
-                if len(parts) > 1:
-                    response = parts[-1].strip()
+            # 모델에 직접 입력
+            inputs = self.tokenizer(conversation_text, return_tensors="pt")
             
-            # 영어 응답이 나온 경우 기본 응답으로 대체
-            if any(word in response.lower() for word in ['hello', 'hi', 'thank', 'please', 'sorry']):
-                return "죄송합니다. 문제를 자세히 파악하고 도와드리도록 하겠습니다. 어떤 증상이 나타나시나요?"
+            # 생성
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    inputs.input_ids,
+                    max_new_tokens=200,
+                    temperature=0.7,
+                    top_p=0.9,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id
+                )
+            
+            # 응답 디코딩
+            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            # <|im_start|>assistant 이후의 내용만 추출
+            if "<|im_start|>assistant" in response:
+                response = response.split("<|im_start|>assistant")[-1].strip()
+            
+            # <|im_end|> 이전의 내용만 추출
+            if "<|im_end|>" in response:
+                response = response.split("<|im_end|>")[0].strip()
+            
+            # 응답 정리
+            response = self._clean_response(response)
             
             # 응답 저장
             message_history.add_user_message(message)
@@ -94,4 +80,27 @@ class LLMService:
             
         except Exception as e:
             print(f"Error in get_response: {str(e)}")
-            return "죄송합니다. 일시적인 오류가 발생했습니다. 다시 한 번 말씀해 주시겠어요?" 
+            return "죄송합니다. 일시적인 오류가 발생했습니다. 다시 한 번 말씀해 주시겠어요?"
+    
+    def _clean_response(self, response: str) -> str:
+        """응답에서 불필요한 태그나 메타데이터를 제거합니다."""
+        # 특수 태그 제거
+        tags_to_remove = [
+            "<|eot_id|>", "<|start_header_id|>", "<|end_header_id|>",
+            "<|im_start|>", "<|im_end|>", "<|endoftext|>",
+            "assistant:", "user:", "system:", "Human:", "Me:"
+        ]
+        
+        for tag in tags_to_remove:
+            response = response.replace(tag, "")
+        
+        # 빈 응답이나 너무 짧은 응답 처리
+        response = response.strip()
+        if len(response) < 5:
+            return "죄송합니다. 다시 한 번 말씀해 주시겠어요?"
+        
+        # 중복된 공백 제거
+        import re
+        response = re.sub(r'\s+', ' ', response).strip()
+        
+        return response 

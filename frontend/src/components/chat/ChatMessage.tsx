@@ -12,7 +12,7 @@ export default function ChatMessage({ content, role, timestamp }: ChatMessagePro
   return (
     <Box
       sx={{
-        alignSelf: role === 'user' ? 'flex-end' : 'flex-start',
+        alignSelf: role === 'user' ? 'flex-start' : 'flex-end',
         maxWidth: '70%',
       }}
     >
@@ -22,7 +22,7 @@ export default function ChatMessage({ content, role, timestamp }: ChatMessagePro
           p: 2,
           bgcolor: role === 'user' ? 'primary.main' : 'grey.100',
           color: role === 'user' ? 'white' : 'text.primary',
-          borderRadius: role === 'user' ? '20px 20px 5px 20px' : '20px 20px 20px 5px',
+          borderRadius: role === 'user' ? '20px 20px 20px 5px' : '20px 20px 5px 20px',
         }}
       >
         <Typography sx={{ wordBreak: 'break-word' }}>{content}</Typography>
@@ -31,7 +31,7 @@ export default function ChatMessage({ content, role, timestamp }: ChatMessagePro
           sx={{
             display: 'block',
             mt: 1,
-            textAlign: role === 'user' ? 'right' : 'left',
+            textAlign: role === 'user' ? 'left' : 'right',
             color: role === 'user' ? 'rgba(255,255,255,0.7)' : 'text.secondary',
           }}
         >

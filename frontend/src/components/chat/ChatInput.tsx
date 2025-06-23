@@ -15,7 +15,7 @@ import { chatService } from '@/services/chatService';
 
 export default function ChatInput() {
   const [message, setMessage] = useState('');
-  const { addMessage, setLoading } = useChatStore();
+  const { addMessage, setLoading, sessionId } = useChatStore();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,11 +31,11 @@ export default function ChatInput() {
 
       try {
         // API 호출
-        const response = await chatService.sendMessage(message.trim());
+        const response = await chatService.sendMessage(message.trim(), sessionId);
         
         // AI 응답 추가
         addMessage({
-          text: response.content,
+          text: response.response,
           sender: 'ai',
         });
       } catch (error) {

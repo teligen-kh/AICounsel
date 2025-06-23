@@ -147,3 +147,9 @@ start "AICounsel Frontend" cmd /k "cd frontend && npm run dev"
 echo Servers are starting...
 echo Backend: http://localhost:8000
 echo Frontend: http://localhost:3000
+
+
+git status
+git add .
+git commit -m "인식할 수 있는 개발 내용 적기"
+git push -u origin main

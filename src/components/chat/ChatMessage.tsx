@@ -12,7 +12,7 @@ export default function ChatMessage({ message }: ChatMessageProps) {
     <Box
       sx={{
         display: 'flex',
-        justifyContent: isAI ? 'flex-start' : 'flex-end',
+        justifyContent: isAI ? 'flex-end' : 'flex-start',
         alignItems: 'flex-end',
         gap: 1,
       }}
@@ -21,12 +21,12 @@ export default function ChatMessage({ message }: ChatMessageProps) {
         sx={{
           maxWidth: '70%',
           padding: 1.5,
-          bgcolor: isAI ? 'grey.100' : 'primary.main',
-          color: isAI ? 'text.primary' : 'white',
+          bgcolor: isAI ? 'primary.main' : 'grey.100',
+          color: isAI ? 'white' : 'text.primary',
           borderRadius: 2,
           ...(isAI
-            ? { borderTopLeftRadius: 0 }
-            : { borderTopRightRadius: 0 }),
+            ? { borderTopRightRadius: 0 }
+            : { borderTopLeftRadius: 0 }),
         }}
       >
         <Typography variant="body1">{message.text}</Typography>

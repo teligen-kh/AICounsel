@@ -1,7 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Box, TextField, Button, Paper, Typography, Container, IconButton } from '@mui/material';
+import { 
+  Box, 
+  TextField, 
+  Button, 
+  Paper, 
+  Typography, 
+  Container, 
+  IconButton,
+  FormControlLabel,
+  Switch,
+  Tooltip
+} from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
+import DatabaseIcon from '@mui/icons-material/Storage';
 import ChatMessage from './ChatMessage';
 import LoadingMessage from './LoadingMessage';
 import { chatApi, ChatMessage as ChatMessageType } from '@/services/api';
@@ -12,6 +24,7 @@ export default function ChatInterface() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId] = useState(() => uuidv4());
+  const [useDbPriority, setUseDbPriority] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -51,7 +64,7 @@ export default function ChatInterface() {
     setIsLoading(true);
 
     try {
-      const response = await chatApi.sendMessage(userMessage);
+      const response = await chatApi.sendMessage(userMessage, useDbPriority);
       const assistantMessage: ChatMessageType = {
         content: response.response,
         role: 'assistant',
@@ -74,12 +87,34 @@ export default function ChatInterface() {
     }
   };
 
+  const handleDbPriorityToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setUseDbPriority(event.target.checked);
+  };
+
   return (
     <Container maxWidth="md" sx={{ height: '100vh', py: 4 }}>
       <Paper elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         {/* 채팅 헤더 */}
-        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h6">AI 상담사</Typography>
+          <Tooltip title="DB 우선 검색 모드: 활성화 시 MongoDB의 기존 답변을 우선적으로 참고합니다">
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={useDbPriority}
+                  onChange={handleDbPriorityToggle}
+                  color="primary"
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <DatabaseIcon fontSize="small" />
+                  DB 우선
+                </Box>
+              }
+              labelPlacement="start"
+            />
+          </Tooltip>
         </Box>
 
         {/* 메시지 영역 */}

@@ -4,13 +4,16 @@ import { Message } from '@/components/chat/ChatMessageList';
 interface ChatState {
   messages: Message[];
   isLoading: boolean;
+  sessionId: string;
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
   setLoading: (loading: boolean) => void;
+  setSessionId: (sessionId: string) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
   messages: [],
   isLoading: false,
+  sessionId: `session-${Date.now()}`,
   addMessage: (message) =>
     set((state) => ({
       messages: [
@@ -23,4 +26,5 @@ export const useChatStore = create<ChatState>((set) => ({
       ],
     })),
   setLoading: (loading) => set({ isLoading: loading }),
+  setSessionId: (sessionId) => set({ sessionId }),
 })); 

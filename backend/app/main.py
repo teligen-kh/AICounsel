@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.chat import router as chat_router
+from app.api.v1.knowledge import router as knowledge_router
 from .config import settings
 from .database import connect_to_mongo, close_mongo_connection
 from .api import chat, analysis
@@ -23,6 +24,7 @@ app.add_middleware(
 
 # 라우터 등록
 app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
+app.include_router(knowledge_router, prefix="/api/v1", tags=["knowledge"])
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
 

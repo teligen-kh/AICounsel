@@ -22,8 +22,10 @@ const api = axios.create({
 });
 
 export const chatApi = {
-    sendMessage: async (message: ChatMessage): Promise<ChatResponse> => {
-        const response = await api.post<ChatResponse>('/chat', message);
+    sendMessage: async (message: ChatMessage, useDbPriority: boolean = true): Promise<ChatResponse> => {
+        const response = await api.post<ChatResponse>('/chat', message, {
+            params: { use_db_priority: useDbPriority },
+        });
         return response.data;
     },
 
@@ -35,5 +37,17 @@ export const chatApi = {
             ...msg,
             timestamp: new Date(msg.timestamp),
         }));
+    },
+
+    setDbPriorityMode: async (enabled: boolean): Promise<{ message: string }> => {
+        const response = await api.post<{ message: string }>('/chat/db-mode', null, {
+            params: { enabled },
+        });
+        return response.data;
+    },
+
+    getDbPriorityMode: async (): Promise<{ db_priority_mode: boolean }> => {
+        const response = await api.get<{ db_priority_mode: boolean }>('/chat/db-mode');
+        return response.data;
     },
 }; 

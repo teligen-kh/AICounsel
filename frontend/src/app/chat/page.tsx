@@ -105,8 +105,8 @@ export default function ChatPage() {
               <Box
                 key={index}
                 sx={{
-                  alignSelf: message.role === 'user' ? 'flex-end' : 'flex-start',
-                  backgroundColor: message.role === 'user' ? 'primary.light' : 'grey.100',
+                  alignSelf: message.role === 'user' ? 'flex-start' : 'flex-end',
+                  backgroundColor: message.role === 'user' ? 'primary.main' : 'grey.100',
                   color: message.role === 'user' ? 'white' : 'text.primary',
                   p: 1,
                   px: 2,

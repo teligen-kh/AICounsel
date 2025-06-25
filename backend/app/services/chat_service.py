@@ -57,4 +57,8 @@ class ChatService:
 
     async def delete_chat_history(self, session_id: str) -> bool:
         result = await self.collection.delete_many({"session_id": session_id})
-        return result.deleted_count > 0 
+        return result.deleted_count > 0
+
+    async def process_message(self, message: ChatMessage, conversation_id: str):
+        # LLM 서비스로 응답 생성
+        response = await self.llm_service.process_message(message, conversation_id) 

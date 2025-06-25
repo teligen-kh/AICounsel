@@ -1,6 +1,7 @@
 import { Paper, Typography, Box } from '@mui/material';
 import { format } from 'date-fns';
 import { ko } from 'date-fns/locale';
+import React from 'react';
 
 interface ChatMessageProps {
   content: string;
@@ -25,7 +26,14 @@ export default function ChatMessage({ content, role, timestamp }: ChatMessagePro
           borderRadius: role === 'user' ? '20px 20px 20px 5px' : '20px 20px 5px 20px',
         }}
       >
-        <Typography sx={{ wordBreak: 'break-word' }}>{content}</Typography>
+        <Typography sx={{ 
+          wordBreak: 'break-word',
+          whiteSpace: 'pre-wrap'
+        }}
+        dangerouslySetInnerHTML={{
+          __html: content.replace(/\n/g, '<br />')
+        }}
+        />
         <Typography
           variant="caption"
           sx={{

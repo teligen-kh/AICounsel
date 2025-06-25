@@ -5,6 +5,9 @@ from ...models.chat import ChatMessage, ChatResponse
 from ...services.chat_service import ChatService
 from ...services.llm_service import LLMService
 from ...database import get_database
+from pydantic import BaseModel
+from motor.motor_asyncio import AsyncIOMotorDatabase
+import logging
 
 router = APIRouter()
 
@@ -17,6 +20,18 @@ def get_llm_service(db) -> LLMService:
     if llm_service is None:
         llm_service = LLMService(db=db, use_db_priority=True)
     return llm_service
+
+class StatsResponse(BaseModel):
+    total_requests: int
+    db_responses: int
+    algorithm_responses: int
+    errors: int
+    avg_processing_time: float
+    avg_db_processing_time: float
+    avg_algorithm_processing_time: float
+    median_processing_time: float
+    min_processing_time: float
+    max_processing_time: float
 
 @router.post("/chat", response_model=ChatResponse)
 async def process_chat(
@@ -45,8 +60,9 @@ async def process_chat(
         logging.info("Message saved to database")
         
         # LLM 응답 생성
-        response_text = await llm_service.get_response(message.session_id, message.content)
+        response_text = await llm_service.process_message(message.content, message.session_id)
         logging.info(f"Generated response: {response_text[:50]}...")
+        logging.info(f"Full response with newlines: {repr(response_text)}")
         
         # 응답 메시지 생성
         assistant_message = ChatMessage(
@@ -109,4 +125,42 @@ async def get_db_priority_mode(db = Depends(get_database)):
         llm_service = get_llm_service(db)
         return {"db_priority_mode": llm_service.use_db_priority}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/stats", response_model=StatsResponse)
+async def get_response_stats(
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """응답 시간 통계를 반환합니다."""
+    try:
+        llm_service = get_llm_service(db)
+        stats = llm_service.get_response_stats()
+        
+        return StatsResponse(
+            total_requests=stats['total_requests'],
+            db_responses=stats['db_responses'],
+            algorithm_responses=stats['algorithm_responses'],
+            errors=stats['errors'],
+            avg_processing_time=stats['avg_processing_time'],
+            avg_db_processing_time=stats['avg_db_processing_time'],
+            avg_algorithm_processing_time=stats['avg_algorithm_processing_time'],
+            median_processing_time=stats['median_processing_time'],
+            min_processing_time=stats['min_processing_time'],
+            max_processing_time=stats['max_processing_time']
+        )
+    except Exception as e:
+        logging.error(f"Stats error: {str(e)}")
+        raise HTTPException(status_code=500, detail="통계 조회 중 오류가 발생했습니다.")
+
+@router.post("/stats/log")
+async def log_response_stats(
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """응답 시간 통계를 로그로 출력합니다."""
+    try:
+        llm_service = get_llm_service(db)
+        llm_service.log_response_stats()
+        return {"message": "통계가 로그에 출력되었습니다."}
+    except Exception as e:
+        logging.error(f"Stats log error: {str(e)}")
+        raise HTTPException(status_code=500, detail="통계 로그 출력 중 오류가 발생했습니다.") 

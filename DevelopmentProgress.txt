@@ -136,7 +136,7 @@ huggingface_token.txt
 
 
 
-start "AICounsel Backend" cmd /k "cd backend && python -m uvicorn app.main:app --reload"
+start "AICounsel Backend" cmd /k "cd backend && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 :: Wait for 3 seconds to let backend initialize first
 timeout /t 3

@@ -43,12 +43,13 @@ class MongoDBSearchService:
                 logging.info(f"Similarity match found for query: {query[:50]}...")
                 return similarity_match
             
+            # 4. DB에 답변이 없을 때 상담사 연락 안내
             logging.info(f"No relevant answer found for query: {query[:50]}...")
-            return None
+            return self._get_consultant_contact_response(query)
             
         except Exception as e:
             logging.error(f"Error in search_answer: {str(e)}")
-            return None
+            return self._get_consultant_contact_response(query)
     
     async def _search_exact_match(self, query: str) -> Optional[str]:
         """정확한 매치를 검색합니다."""
@@ -340,13 +341,13 @@ class MongoDBSearchService:
             return []
 
     def _extract_improved_keywords(self, text: str) -> List[str]:
-        """개선된 키워드 추출 - "DB"와 "늘리" 조합 검색 강화"""
+        """개선된 키워드 추출 - 더 정확한 검색을 위한 키워드 추출"""
         try:
             # 특수문자 제거 및 소문자 변환
             text = re.sub(r'[^\w\s가-힣]', ' ', text)
             words = text.split()
             
-            # 불용어 목록
+            # 불용어 목록 확장
             stop_words = {
                 '어떻게', '해요', '돼요', '있어요', '하나요', '오류', '발생', '했어요', '안돼요',
                 '이', '가', '을', '를', '의', '에', '에서', '로', '으로', '와', '과', '도', '만', 
@@ -354,37 +355,58 @@ class MongoDBSearchService:
                 '문제', '해결', '방법', '알려', '주세요', '요청', '문의', '도움', '좀', '요',
                 '아니', '그게', '아니라', '그것도', '방법이긴', '한데', '다른', '매장', '점주에게',
                 '들으니', '하드디스크', '용량만큼', '사용이', '가능하게', '늘려주는', '방법이',
-                '있다고', '하던데', '뭔소리야', '인가', '뭔가를', '늘리는', '방법이', '있다며'
+                '있다고', '하던데', '뭔소리야', '인가', '뭔가를', '늘리는', '방법이', '있다며',
+                '안녕하세요', '안녕', '하세요', '안녕하', '세요', '안녕하세요?', '안녕하세요!',
+                '어떤', '도움이', '필요하신가요', '필요하신가요?', '필요하신가요!',
+                '도움이', '필요해요', '필요합니다', '필요해', '필요하', '도움', '필요'
             }
             
             # 불용어 제거 및 2글자 이상만 선택
             keywords = [word for word in words if word not in stop_words and len(word) >= 2]
             
-            # 핵심 키워드 우선순위 부여 (DB와 늘리기 관련 키워드 강화)
+            # 핵심 키워드 우선순위 부여 (확장)
             priority_keywords = [
                 'DB', '데이터베이스', '공간', '늘리기', '늘리', 'ARUMLOCADB', 'TABLE',
-                '데이터', '저장', '용량', '확장', '증가', '크기', '사이즈'
+                '데이터', '저장', '용량', '확장', '증가', '크기', '사이즈', '설치', '재설치',
+                '포스', 'POS', '프로그램', '백업', '복원', '오류', '에러', '문제', '해결',
+                '연결', '설정', '터치', '프린터', '키오스크', '클라우드', 'SQL', '서버'
             ]
             
-            # DB와 늘리기 조합 키워드 특별 처리
-            db_grow_keywords = []
+            # 특정 조합 키워드 생성
+            combination_keywords = []
+            
+            # DB 관련 조합
             if any(word in text for word in ['DB', '데이터베이스', '데이터']):
                 if any(word in text for word in ['늘리', '늘리기', '증가', '확장', '크기']):
-                    db_grow_keywords.extend(['DB늘리기', '데이터베이스늘리기', 'DB공간늘리기'])
+                    combination_keywords.extend(['DB늘리기', '데이터베이스늘리기', 'DB공간늘리기'])
+            
+            # 포스 관련 조합
+            if '포스' in text or 'POS' in text:
+                if '설치' in text:
+                    combination_keywords.extend(['포스설치', 'POS설치'])
+                if '재설치' in text:
+                    combination_keywords.extend(['포스재설치', 'POS재설치'])
+            
+            # 프로그램 관련 조합
+            if '프로그램' in text:
+                if '설치' in text:
+                    combination_keywords.append('프로그램설치')
+                if '재설치' in text:
+                    combination_keywords.append('프로그램재설치')
             
             filtered_keywords = []
             
             # 조합 키워드를 최우선으로 추가
-            filtered_keywords.extend(db_grow_keywords)
+            filtered_keywords.extend(combination_keywords)
             
             # 개별 키워드 처리
             for keyword in keywords:
                 if keyword in priority_keywords:
-                    filtered_keywords.insert(len(db_grow_keywords), keyword)  # 조합 키워드 다음에 배치
+                    filtered_keywords.insert(len(combination_keywords), keyword)  # 조합 키워드 다음에 배치
                 else:
                     filtered_keywords.append(keyword)
             
-            return filtered_keywords[:8]  # 상위 8개까지 반환 (조합 키워드 포함)
+            return filtered_keywords[:10]  # 상위 10개까지 반환
             
         except Exception as e:
             logging.error(f"Error extracting improved keywords: {str(e)}")
@@ -549,3 +571,25 @@ class MongoDBSearchService:
         
         # 기본 안내
         return "질문을 더 구체적으로 말씀해 주시면 정확한 답변을 드릴 수 있습니다. 어떤 부분에 대해 도움이 필요하신가요?" 
+
+    def _get_consultant_contact_response(self, query: str) -> str:
+        """상담사 연락을 유도하는 답변을 반환합니다."""
+        # 키워드 추출
+        keywords = self._extract_improved_keywords(query)
+        
+        # 일반적인 질문 패턴 감지
+        if len(keywords) == 0 or len(keywords) == 1:
+            return "상담사에게 문의하시겠습니까? 저희 상담사에게 연락하여 도움을 받을 수 있습니다. 전화번호는 02-1234-5678입니다."
+        
+        # 특정 키워드 기반 안내
+        if '설치' in query.lower():
+            return "설치와 관련된 질문이시군요. 상담사에게 문의하시면 더 구체적인 답변을 드릴 수 있습니다."
+        
+        if '오류' in query.lower() or '문제' in query.lower():
+            return "오류나 문제가 발생하셨군요. 상담사에게 문의하시면 더 구체적인 답변을 드릴 수 있습니다."
+        
+        if '코드' in query.lower():
+            return "코드와 관련된 질문이시군요. 상담사에게 문의하시면 더 구체적인 답변을 드릴 수 있습니다."
+        
+        # 기본 안내
+        return "상담사에게 문의하시면 더 구체적인 답변을 드릴 수 있습니다." 

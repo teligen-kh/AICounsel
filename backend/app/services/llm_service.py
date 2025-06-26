@@ -13,9 +13,12 @@ import time
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from enum import Enum
+import asyncio
 
 class IntentType(Enum):
     """사용자 의도 타입"""
+    CASUAL = "casual"  # 일상 대화
+    PROFESSIONAL = "professional"  # 전문 상담
     GREETING = "greeting"  # 인사
     QUESTION = "question"  # 질문
     COMPLAINT = "complaint"  # 불만/문제
@@ -41,18 +44,20 @@ class LLMService:
         else:
             self.search_service = None
         
-        # 대화 알고리즘 초기화
+        # 고객 응대 알고리즘 초기화
         self.conversation_algorithm = ConversationAlgorithm()
         
         # 응답 시간 통계 초기화
         self.response_stats = {
             'total_requests': 0,
+            'casual_conversations': 0,
+            'professional_conversations': 0,
             'db_responses': 0,
-            'algorithm_responses': 0,
+            'llama_responses': 0,
             'errors': 0,
             'total_processing_time': 0,
             'db_processing_time': 0,
-            'algorithm_processing_time': 0,
+            'llama_processing_time': 0,
             'error_processing_time': 0,
             'min_processing_time': float('inf'),
             'max_processing_time': 0,
@@ -105,7 +110,7 @@ class LLMService:
 
     async def process_message(self, message: str, conversation_id: str = None) -> str:
         """
-        메시지를 처리하고 응답을 생성합니다.
+        고객 응대 알고리즘에 따른 메시지 처리
         
         Args:
             message: 사용자 메시지
@@ -120,26 +125,18 @@ class LLMService:
         try:
             logging.info(f"Received chat message: {message[:50]}...")
             
-            # DB에서 관련 답변 검색
-            db_answer = None
-            if self.search_service:
-                db_answer = await self.search_service.search_answer(message)
+            # 1. 대화 유형 분류
+            conversation_type = self.conversation_algorithm.classify_conversation_type(message)
+            logging.info(f"Conversation type: {conversation_type}")
             
-            # DB 답변이 있으면 바로 포맷팅해서 반환 (LLM 개선 없이)
-            if db_answer:
-                logging.info(f"DB answer found, formatting... Original: {db_answer[:100]}...")
-                response = self._format_db_answer(db_answer)
-                logging.info(f"DB answer formatted: {response[:100]}...")
-                self.response_stats['db_responses'] += 1
+            if conversation_type == "casual":
+                self.response_stats['casual_conversations'] += 1
+                # 2. 일상 대화 처리 (LLaMA 3.1 8B)
+                response = await self._handle_casual_conversation(message)
             else:
-                # 대화 알고리즘으로 응답 생성
-                response = await self.conversation_algorithm.generate_response(
-                    message, None, self.model, self.tokenizer
-                )
-                self.response_stats['algorithm_responses'] += 1
-                
-                # 응답 길이 제한 및 줄바꿈 개선 (알고리즘 응답에만 적용)
-                response = self._format_response(response)
+                self.response_stats['professional_conversations'] += 1
+                # 3. 전문 상담 처리 (MongoDB + LLaMA 정리)
+                response = await self._handle_professional_conversation(message)
             
             # 처리 시간 계산
             processing_time = (time.time() - start_time) * 1000
@@ -165,6 +162,146 @@ class LLMService:
             logging.error(f"Error processing message: {str(e)}")
             return "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 
+    async def _handle_casual_conversation(self, message: str) -> str:
+        """일상 대화 처리"""
+        llama_start_time = time.time()
+        
+        try:
+            # 전역 LLM 서비스 인스턴스 확인
+            try:
+                from ..main import get_llm_service
+                global_llm_service = get_llm_service()
+                if global_llm_service and global_llm_service.model and global_llm_service.tokenizer:
+                    # 전역 인스턴스의 모델 사용
+                    response = await self.conversation_algorithm._generate_llama_casual_response(
+                        message, global_llm_service.model, global_llm_service.tokenizer
+                    )
+                    self.response_stats['llama_responses'] += 1
+                else:
+                    # 전역 인스턴스가 없거나 모델이 로드되지 않은 경우
+                    if self.model and self.tokenizer:
+                        response = await self.conversation_algorithm._generate_llama_casual_response(
+                            message, self.model, self.tokenizer
+                        )
+                        self.response_stats['llama_responses'] += 1
+                    else:
+                        # 모델 로딩 대기
+                        logging.warning("LLaMA model not loaded yet, waiting for model initialization...")
+                        
+                        # 최대 10초 대기 (서버 시작 시 이미 로딩 중이므로 짧게)
+                        max_wait_time = 10
+                        wait_time = 0
+                        while not (self.model and self.tokenizer) and wait_time < max_wait_time:
+                            await asyncio.sleep(1)
+                            wait_time += 1
+                        
+                        if self.model and self.tokenizer:
+                            response = await self.conversation_algorithm._generate_llama_casual_response(
+                                message, self.model, self.tokenizer
+                            )
+                            self.response_stats['llama_responses'] += 1
+                        else:
+                            # 모델 로딩 실패 시 기본 응답
+                            logging.error("LLaMA model failed to load within timeout")
+                            return "안녕하세요! 일상적인 대화를 나누고 싶으시군요. 어떤 이야기를 하고 싶으신가요?"
+            except ImportError:
+                # main 모듈을 import할 수 없는 경우 (순환 참조 방지)
+                if self.model and self.tokenizer:
+                    response = await self.conversation_algorithm._generate_llama_casual_response(
+                        message, self.model, self.tokenizer
+                    )
+                    self.response_stats['llama_responses'] += 1
+                else:
+                    # 기본 응답
+                    return "안녕하세요! 일상적인 대화를 나누고 싶으시군요. 어떤 이야기를 하고 싶으신가요?"
+            
+            llama_time = (time.time() - llama_start_time) * 1000
+            self.response_stats['llama_processing_time'] += llama_time
+            
+            return response
+            
+        except Exception as e:
+            logging.error(f"Error in casual conversation: {str(e)}")
+            return "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+
+    async def _handle_professional_conversation(self, message: str) -> str:
+        """전문 상담 처리"""
+        db_start_time = time.time()
+        
+        try:
+            # 1. MongoDB에서 관련 답변 검색
+            db_answer = None
+            if self.search_service:
+                db_answer = await self.search_service.search_answer(message)
+            
+            db_time = (time.time() - db_start_time) * 1000
+            self.response_stats['db_processing_time'] += db_time
+            
+            # 2. DB 답변이 있는 경우 LLaMA로 친절하게 정리
+            if db_answer:
+                self.response_stats['db_responses'] += 1
+                llama_start_time = time.time()
+                
+                # 전역 LLM 서비스 인스턴스 확인
+                try:
+                    from ..main import get_llm_service
+                    global_llm_service = get_llm_service()
+                    if global_llm_service and global_llm_service.model and global_llm_service.tokenizer:
+                        # 전역 인스턴스의 모델 사용
+                        response = await self.conversation_algorithm._generate_llama_professional_response(
+                            message, db_answer, global_llm_service.model, global_llm_service.tokenizer
+                        )
+                        self.response_stats['llama_responses'] += 1
+                    else:
+                        # 전역 인스턴스가 없거나 모델이 로드되지 않은 경우
+                        if self.model and self.tokenizer:
+                            response = await self.conversation_algorithm._generate_llama_professional_response(
+                                message, db_answer, self.model, self.tokenizer
+                            )
+                            self.response_stats['llama_responses'] += 1
+                        else:
+                            # 모델 로딩 대기 (서버 시작 시 이미 로딩 중이므로 짧게)
+                            logging.warning("LLaMA model not loaded yet, waiting for model initialization...")
+                            
+                            # 최대 10초 대기
+                            max_wait_time = 10
+                            wait_time = 0
+                            while not (self.model and self.tokenizer) and wait_time < max_wait_time:
+                                await asyncio.sleep(1)
+                                wait_time += 1
+                            
+                            if self.model and self.tokenizer:
+                                response = await self.conversation_algorithm._generate_llama_professional_response(
+                                    message, db_answer, self.model, self.tokenizer
+                                )
+                                self.response_stats['llama_responses'] += 1
+                            else:
+                                # 모델 로딩 실패 시 기본 포맷팅 사용
+                                logging.error("LLaMA model failed to load within timeout, using basic formatting")
+                                response = self.conversation_algorithm._format_db_answer(db_answer, message)
+                except ImportError:
+                    # main 모듈을 import할 수 없는 경우 (순환 참조 방지)
+                    if self.model and self.tokenizer:
+                        response = await self.conversation_algorithm._generate_llama_professional_response(
+                            message, db_answer, self.model, self.tokenizer
+                        )
+                        self.response_stats['llama_responses'] += 1
+                    else:
+                        # 기본 포맷팅 사용
+                        response = self.conversation_algorithm._format_db_answer(db_answer, message)
+                
+                llama_time = (time.time() - llama_start_time) * 1000
+                self.response_stats['llama_processing_time'] += llama_time
+                
+                return response
+            else:
+                # 3. DB 답변이 없는 경우 상담사 연락 안내
+                return self.conversation_algorithm.generate_no_answer_response(message)
+                
+        except Exception as e:
+            logging.error(f"Error in professional conversation: {str(e)}")
+            return self.conversation_algorithm.generate_no_answer_response(message)
+
     def _format_response(self, response: str) -> str:
         """응답을 포맷팅합니다."""
         return FormattingService.format_response(response)
@@ -177,8 +314,10 @@ class LLMService:
             stats['avg_processing_time'] = stats['total_processing_time'] / stats['total_requests']
             if stats['db_responses'] > 0:
                 stats['avg_db_processing_time'] = stats['db_processing_time'] / stats['db_responses']
-            if stats['algorithm_responses'] > 0:
-                stats['avg_algorithm_processing_time'] = stats['algorithm_processing_time'] / stats['algorithm_responses']
+            if stats['llama_responses'] > 0:
+                stats['avg_llama_processing_time'] = stats['llama_processing_time'] / stats['llama_responses']
+            else:
+                stats['avg_llama_processing_time'] = 0
             
             # 중간값 계산
             if stats['processing_times']:
@@ -187,7 +326,7 @@ class LLMService:
         else:
             stats['avg_processing_time'] = 0
             stats['avg_db_processing_time'] = 0
-            stats['avg_algorithm_processing_time'] = 0
+            stats['avg_llama_processing_time'] = 0
             stats['median_processing_time'] = 0
         
         return stats
@@ -197,52 +336,41 @@ class LLMService:
         stats = self.get_response_stats()
         
         logging.info("=" * 60)
-        logging.info("응답 시간 통계")
+        logging.info("고객 응대 알고리즘 통계")
         logging.info("=" * 60)
         logging.info(f"총 요청 수: {stats['total_requests']}")
-        logging.info(f"DB 응답 수: {stats['db_responses']}")
-        logging.info(f"알고리즘 응답 수: {stats['algorithm_responses']}")
-        logging.info(f"오류 수: {stats['errors']}")
+        logging.info(f"일상 대화: {stats['casual_conversations']} ({stats['casual_conversations']/stats['total_requests']*100:.1f}%)")
+        logging.info(f"전문 상담: {stats['professional_conversations']} ({stats['professional_conversations']/stats['total_requests']*100:.1f}%)")
+        logging.info(f"DB 응답: {stats['db_responses']}")
+        logging.info(f"LLaMA 응답: {stats['llama_responses']}")
+        logging.info(f"오류: {stats['errors']}")
         logging.info("-" * 60)
         logging.info(f"평균 처리 시간: {stats['avg_processing_time']:.2f}ms")
-        logging.info(f"DB 평균 처리 시간: {stats['avg_db_processing_time']:.2f}ms")
-        logging.info(f"알고리즘 평균 처리 시간: {stats['avg_algorithm_processing_time']:.2f}ms")
         logging.info(f"중간값 처리 시간: {stats['median_processing_time']:.2f}ms")
         logging.info(f"최소 처리 시간: {stats['min_processing_time']:.2f}ms")
         logging.info(f"최대 처리 시간: {stats['max_processing_time']:.2f}ms")
-        logging.info("=" * 60) 
+        logging.info(f"평균 DB 처리 시간: {stats['avg_db_processing_time']:.2f}ms")
+        
+        # LLaMA 처리 시간 안전하게 출력
+        avg_llama_time = stats.get('avg_llama_processing_time', 0)
+        logging.info(f"평균 LLaMA 처리 시간: {avg_llama_time:.2f}ms")
+        logging.info("=" * 60)
 
     async def _enhance_db_answer_with_llm(self, message: str, db_answer: str) -> str:
-        """DB 답변을 LLM으로 개선하여 더 친절하게 만듭니다."""
+        """LLaMA 3.1 8B로 DB 답변을 개선합니다."""
         try:
-            # 모델이 로드되지 않은 경우 DB 답변을 간단히 정리해서 반환
-            if self.model is None or self.tokenizer is None:
-                logging.warning("LLM model not loaded, using formatted DB answer")
+            if not self.model or not self.tokenizer:
                 return self._format_db_answer(db_answer)
             
-            # DB 답변을 친절하게 개선하는 프롬프트
-            enhancement_prompt = f"""다음은 사용자의 질문과 관련된 전문적인 답변입니다. 
-이 답변을 친절하고 이해하기 쉽게 개선해주세요.
+            prompt = f"""당신은 전문적인 AI 상담사입니다. 다음 DB 답변을 사용자에게 친절하고 이해하기 쉽게 전달해주세요.
 
 사용자 질문: {message}
-전문 답변: {db_answer}
+DB 답변: {db_answer}
 
-위의 전문 답변을 바탕으로 다음 조건을 만족하는 답변을 제공해주세요:
-1. 친절하고 이해하기 쉬운 톤으로 작성
-2. 전문 용어가 있다면 쉬운 말로 설명
-3. 단계별로 명확하게 나열 (1. 2. 3. 형태)
-4. 실용적이고 실행 가능한 내용만 포함
-5. 한국어로 자연스럽게 작성
-6. 상담사가 안내하는 느낌으로 작성
-7. 줄바꿈을 적절히 사용하여 가독성 향상
-8. DB 관련 용어는 "데이터베이스"로 통일
-9. ARUMLOCADB는 "아루모로카 데이터베이스"로 설명
-10. 각 단계마다 구체적인 설명 추가
+친절하고 전문적인 응답:"""
 
-답변은 친근하고 도움이 되는 톤으로 작성해주세요."""
-
-            # LLaMA 3.1 8B Instruct 형식으로 입력 구성
-            conversation_text = f"<|im_start|>user\n{enhancement_prompt}<|im_end|>\n<|im_start|>assistant\n"
+            # LLaMA 3.1 8B 형식으로 입력 구성
+            conversation_text = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
             
             # 모델에 직접 입력
             inputs = self.tokenizer(conversation_text, return_tensors="pt")
@@ -251,36 +379,49 @@ class LLMService:
             with torch.no_grad():
                 outputs = self.model.generate(
                     inputs.input_ids,
-                    max_new_tokens=300,  # 200에서 300으로 증가
-                    temperature=0.7,    # 0.6에서 0.7로 조정
-                    top_p=0.9,          # 0.8에서 0.9로 조정
+                    max_new_tokens=200,
+                    temperature=0.6,
+                    top_p=0.9,
                     do_sample=True,
                     pad_token_id=self.tokenizer.eos_token_id,
                     eos_token_id=self.tokenizer.eos_token_id,
-                    repetition_penalty=1.2,  # 1.1에서 1.2로 조정
-                    no_repeat_ngram_size=3,   # n-gram 반복 방지
-                    length_penalty=1.1  # 길이 페널티 추가
+                    repetition_penalty=1.1
                 )
             
             # 응답 후처리
             response = self.tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-            
-            # 응답 정리 및 개선
             response = response.strip()
             
-            # FormattingService를 사용하여 포맷팅
-            response = FormattingService.format_response(response)
+            return response if response else self._format_db_answer(db_answer)
+            
+        except Exception as e:
+            logging.error(f"Error enhancing DB answer with LLM: {str(e)}")
+            return self._format_db_answer(db_answer)
+
+    def _format_db_answer(self, db_answer: str) -> str:
+        """DB 답변을 포맷팅합니다."""
+        try:
+            # 기본 정리
+            response = db_answer.strip()
+            
+            # 줄바꿈 개선
+            response = response.replace('\\n', '\n')
+            response = response.replace('  ', '\n')  # 두 개 이상의 공백을 줄바꿈으로
+            response = response.replace('* ', '\n• ')  # 불릿 포인트 개선
+            response = response.replace('1. ', '\n1. ')  # 번호 매기기 개선
+            response = response.replace('2. ', '\n2. ')
+            response = response.replace('3. ', '\n3. ')
+            response = response.replace('4. ', '\n4. ')
+            
+            # 응답 길이 제한 (문자 수 기준)
+            if len(response) > 400:  # 400자로 제한
+                response = response[:400] + "..."
+            
+            # 불필요한 줄바꿈 정리
+            response = '\n'.join(line.strip() for line in response.split('\n') if line.strip())
             
             return response
             
         except Exception as e:
-            logging.error(f"Error enhancing DB answer with LLM: {str(e)}")
-            # DB 답변을 간단히 정리해서 반환
-            return self._format_db_answer(db_answer)
-
-    def _format_db_answer(self, db_answer: str) -> str:
-        """DB 답변을 간단히 정리하여 반환합니다."""
-        logging.info(f"Formatting DB answer: {db_answer[:100]}...")
-        formatted = FormattingService.format_db_answer(db_answer)
-        logging.info(f"Formatted result: {formatted[:100]}...")
-        return formatted
+            logging.error(f"Error formatting DB answer: {str(e)}")
+            return db_answer

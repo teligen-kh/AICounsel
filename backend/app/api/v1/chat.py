@@ -11,15 +11,22 @@ import logging
 
 router = APIRouter()
 
-# 전역 LLM 서비스 인스턴스 (DB 연결 후 초기화)
-llm_service = None
-
 def get_llm_service(db) -> LLMService:
-    """LLM 서비스 인스턴스를 반환합니다."""
-    global llm_service
-    if llm_service is None:
-        llm_service = LLMService(db=db, use_db_priority=True)
-    return llm_service
+    """전역 LLM 서비스 인스턴스를 반환합니다."""
+    try:
+        # main.py의 전역 인스턴스 사용
+        from ...main import get_llm_service as get_global_llm_service
+        global_service = get_global_llm_service()
+        if global_service and global_service.model and global_service.tokenizer:
+            logging.info("Using global LLM service instance")
+            return global_service
+        else:
+            logging.warning("Global LLM service not ready, creating new instance")
+            return LLMService(db=db, use_db_priority=True)
+    except ImportError:
+        # main 모듈을 import할 수 없는 경우
+        logging.warning("Cannot import main module, creating new LLM service instance")
+        return LLMService(db=db, use_db_priority=True)
 
 class StatsResponse(BaseModel):
     total_requests: int

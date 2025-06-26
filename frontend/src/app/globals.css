@@ -22,7 +22,15 @@
   }
 }
 
+/* Material-UI Typography 줄바꿈 처리 */
+.MuiTypography-root {
+  white-space: pre-wrap !important;
+}
 
+/* 특정 텍스트가 포함된 Typography 요소에만 적용 */
+.MuiTypography-root:has-text-content {
+  white-space: pre-wrap !important;
+}
 
 @layer base {
   :root {
@@ -79,8 +87,6 @@
     --chart-5: 340 75% 55%;
   }
 }
-
-
 
 @layer base {
   * {

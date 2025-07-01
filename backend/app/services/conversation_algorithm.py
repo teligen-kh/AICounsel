@@ -330,21 +330,19 @@ class ConversationAlgorithm:
             logging.error(f"Error in generate_response: {str(e)}")
             return "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 
-    async def _generate_llama_casual_response(self, message: str, model, tokenizer) -> str:
+    async def _generate_llama_casual_response(self, message: str, model, tokenizer, config=None) -> str:
         """LLaMA 3.1 8B로 일상 대화 응답 생성"""
         try:
             # 토크나이저 설정
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
             
-            prompt = f"""당신은 친절한 AI 상담사입니다. 다음 일상 대화에 자연스럽고 친근하게 응답해주세요.
-
-사용자: {message}
-
-친근하고 자연스러운 응답:"""
-
-            # LLaMA 3.1 8B 형식으로 입력 구성
-            conversation_text = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+            # 모델 설정 가져오기
+            max_tokens = config.max_tokens if config else 20
+            temperature = config.temperature if config else 0.3
+            
+            # 간단한 입력 형식 사용
+            conversation_text = message
             
             # 모델에 직접 입력 (attention_mask 명시적 설정)
             inputs = tokenizer(
@@ -352,28 +350,31 @@ class ConversationAlgorithm:
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=512
+                max_length=64  # 128에서 64로 더 줄임
             )
             
-            # 생성
+            # 생성 (토큰 수 줄이고 파라미터 최적화)
             with torch.no_grad():
                 outputs = model.generate(
                     inputs.input_ids,
                     attention_mask=inputs.attention_mask,
-                    max_new_tokens=100,
-                    temperature=0.7,
-                    top_p=0.9,
+                    max_new_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=0.7,  # 0.8에서 0.7로 줄임
                     do_sample=True,
                     pad_token_id=tokenizer.eos_token_id,
                     eos_token_id=tokenizer.eos_token_id,
-                    repetition_penalty=1.1
+                    repetition_penalty=1.02,  # 1.05에서 1.02로 줄임
+                    early_stopping=True,
+                    num_beams=1,  # 빔 서치 비활성화로 속도 향상
+                    use_cache=True  # 캐시 사용으로 속도 향상
                 )
             
-            # 응답 후처리
+            # 응답 후처리 (간단하게)
             response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
             response = response.strip()
             
-            # 응답 클리닝
+            # 응답 클리닝 (간단하게)
             response = self._clean_llama_response(response)
             
             return response if response else self._generate_casual_response(message)
@@ -382,22 +383,19 @@ class ConversationAlgorithm:
             logging.error(f"Error in LLaMA casual response: {str(e)}")
             return self._generate_casual_response(message)
 
-    async def _generate_llama_professional_response(self, message: str, db_answer: str, model, tokenizer) -> str:
+    async def _generate_llama_professional_response(self, message: str, db_answer: str, model, tokenizer, config=None) -> str:
         """LLaMA 3.1 8B로 전문 상담 응답 생성"""
         try:
             # 토크나이저 설정
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
             
-            prompt = f"""당신은 전문적인 AI 상담사입니다. 다음 DB 답변을 사용자에게 친절하고 이해하기 쉽게 전달해주세요.
-
-사용자 질문: {message}
-DB 답변: {db_answer}
-
-친절하고 전문적인 응답:"""
-
-            # LLaMA 3.1 8B 형식으로 입력 구성
-            conversation_text = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+            # 모델 설정 가져오기
+            max_tokens = config.max_tokens if config else 20
+            temperature = config.temperature if config else 0.3
+            
+            # 간단한 입력 형식 사용
+            conversation_text = message
             
             # 모델에 직접 입력 (attention_mask 명시적 설정)
             inputs = tokenizer(
@@ -405,28 +403,31 @@ DB 답변: {db_answer}
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=512
+                max_length=64  # 128에서 64로 더 줄임
             )
             
-            # 생성
+            # 생성 (토큰 수 줄이고 파라미터 최적화)
             with torch.no_grad():
                 outputs = model.generate(
                     inputs.input_ids,
                     attention_mask=inputs.attention_mask,
-                    max_new_tokens=200,
-                    temperature=0.6,
-                    top_p=0.9,
+                    max_new_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=0.7,  # 0.8에서 0.7로 줄임
                     do_sample=True,
                     pad_token_id=tokenizer.eos_token_id,
                     eos_token_id=tokenizer.eos_token_id,
-                    repetition_penalty=1.1
+                    repetition_penalty=1.02,  # 1.05에서 1.02로 줄임
+                    early_stopping=True,
+                    num_beams=1,  # 빔 서치 비활성화로 속도 향상
+                    use_cache=True  # 캐시 사용으로 속도 향상
                 )
             
-            # 응답 후처리
+            # 응답 후처리 (간단하게)
             response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
             response = response.strip()
             
-            # 응답 클리닝
+            # 응답 클리닝 (간단하게)
             response = self._clean_llama_response(response)
             
             return response if response else self._format_db_answer(db_answer, message)
@@ -436,17 +437,11 @@ DB 답변: {db_answer}
             return self._format_db_answer(db_answer, message)
 
     def _clean_llama_response(self, response: str) -> str:
-        """LLaMA 응답을 클리닝합니다."""
+        """LLaMA 응답을 간단하게 클리닝합니다."""
         try:
             # 특수 태그 제거
             response = response.replace("<|im_end|>", "").replace("<|im_start|>", "")
-            response = response.replace("<|endoftext|>", "").replace("<|endoftext|>", "")
-            
-            # 마크다운 헤더 제거
-            response = re.sub(r'^#+\s*.*$', '', response, flags=re.MULTILINE)
-            
-            # 불필요한 줄바꿈 정리
-            response = re.sub(r'\n\s*\n\s*\n', '\n\n', response)
+            response = response.replace("<|endoftext|>", "")
             
             # 앞뒤 공백 제거
             response = response.strip()
@@ -455,9 +450,9 @@ DB 답변: {db_answer}
             if not response or response.isspace():
                 return ""
             
-            # 응답 길이 제한 (300자)
-            if len(response) > 300:
-                response = response[:300].rsplit('\n', 1)[0] + "..."
+            # 응답 길이 제한 (150자)
+            if len(response) > 150:
+                response = response[:150] + "..."
             
             return response
             

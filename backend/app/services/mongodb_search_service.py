@@ -83,13 +83,6 @@ class MongoDBSearchService:
             if not keywords:
                 return None
             
-            # 핵심 키워드 확인
-            core_keywords = ['DB', '데이터베이스', '늘리기', '늘리', '공간']
-            has_core_keyword = any(keyword in core_keywords for keyword in keywords)
-            
-            if not has_core_keyword:
-                return None
-            
             # 모든 지식 베이스 항목을 가져와서 점수 계산
             all_items = await self.knowledge_collection.find({}).to_list(length=None)
             
@@ -97,13 +90,14 @@ class MongoDBSearchService:
             best_score = 0
             
             for item in all_items:
-                score = self._calculate_precise_keyword_score(item, keywords)
+                score = self._calculate_keyword_score(item, keywords)
                 if score > best_score:
                     best_score = score
                     best_match = item
             
             # 점수가 충분히 높은 경우만 반환 (임계값을 낮춤)
-            if best_score >= 2.0:  # 3.0에서 2.0으로 낮춤
+            if best_score >= 1.5:  # 2.0에서 1.5로 낮춤
+                logging.info(f"Keyword match found with score {best_score}: {best_match.get('question', '')[:50]}...")
                 return best_match['answer']
             
             return None
@@ -112,59 +106,46 @@ class MongoDBSearchService:
             logging.error(f"Error in keyword search: {str(e)}")
             return None
 
-    def _calculate_precise_keyword_score(self, item: Dict, keywords: List[str]) -> float:
-        """정확한 키워드 매칭 점수를 계산합니다."""
+    def _calculate_keyword_score(self, item: Dict, keywords: List[str]) -> float:
+        """키워드 매칭 점수를 계산합니다."""
         score = 0.0
         question = item.get('question', '').lower()
         answer = item.get('answer', '').lower()
         
-        # 핵심 키워드 조합 확인 (DB와 늘리기 관련)
-        core_combinations = [
-            ('DB', '늘리기'),
-            ('DB', '늘리'),
-            ('데이터베이스', '늘리기'),
-            ('데이터베이스', '늘리'),
-            ('공간', '늘리기'),
-            ('공간', '늘리'),
-            ('DB', '공간'),
-            ('데이터베이스', '공간'),
-            ('ARUMLOCADB', '늘리기'),
-            ('ARUMLOCADB', '늘리'),
-            ('TABLE', '늘리기'),
-            ('TABLE', '늘리')
-        ]
-        
-        # 핵심 키워드 가중치 (DB와 늘리기 관련 키워드 강화)
+        # 핵심 키워드 가중치
         priority_keywords = {
-            'DB': 8.0,  # 가중치 증가
-            '데이터베이스': 8.0,  # 가중치 증가
-            'ARUMLOCADB': 10.0,  # 가장 높은 가중치
-            '공간': 6.0,  # 가중치 증가
-            '늘리기': 6.0,  # 가중치 증가
-            '늘리': 6.0,  # 가중치 증가
-            'TABLE': 5.0,  # 가중치 증가
-            'SQL': 4.0,
-            '데이터': 4.0,  # 가중치 증가
-            '저장': 3.0,
-            '용량': 4.0,  # 새로운 키워드
-            '확장': 5.0,  # 새로운 키워드
-            '증가': 5.0,  # 새로운 키워드
-            '크기': 4.0,  # 새로운 키워드
-            '사이즈': 4.0  # 새로운 키워드
+            '포스': 5.0,
+            'POS': 5.0,
+            '프로그램': 4.0,
+            '설치': 4.0,
+            '재설치': 6.0,  # 재설치가 더 구체적이므로 높은 가중치
+            '데이터': 4.0,
+            '백업': 5.0,
+            '복원': 4.0,
+            '키오스크': 5.0,
+            '터치': 3.0,
+            '프린터': 5.0,
+            '인쇄': 4.0,
+            '출력': 3.0,
+            '오류': 3.0,
+            '에러': 3.0,
+            '문제': 2.0,
+            '연결': 3.0,
+            '설정': 3.0,
+            '네트워크': 4.0,
+            '와이파이': 4.0,
+            'WiFi': 4.0,
+            '결제': 4.0,
+            '환불': 4.0,
+            '취소': 3.0,
+            'DB': 6.0,
+            '데이터베이스': 6.0,
+            '공간': 4.0,
+            '늘리기': 5.0,
+            '늘리': 5.0,
+            'ARUMLOCADB': 8.0,
+            'TABLE': 4.0
         }
-        
-        # 핵심 키워드 조합이 있는지 확인 (가중치 증가)
-        for combo in core_combinations:
-            if combo[0] in question and combo[1] in question:
-                score += 15.0  # 핵심 조합에 더 높은 점수
-            if combo[0] in answer and combo[1] in answer:
-                score += 8.0  # 답변에서도 조합 발견 시 높은 점수
-        
-        # DB와 늘리기 조합 특별 처리
-        if ('DB' in question or '데이터베이스' in question) and ('늘리' in question or '늘리기' in question):
-            score += 20.0  # 매우 높은 점수
-        if ('DB' in answer or '데이터베이스' in answer) and ('늘리' in answer or '늘리기' in answer):
-            score += 12.0  # 답변에서도 높은 점수
         
         # 개별 키워드 점수
         for keyword in keywords:
@@ -172,24 +153,36 @@ class MongoDBSearchService:
             
             # 질문에 키워드가 있으면 높은 점수
             if keyword in question:
-                score += 4.0 * weight  # 가중치 증가
+                score += 3.0 * weight
             # 답변에 키워드가 있으면 중간 점수
             if keyword in answer:
-                score += 1.5 * weight  # 가중치 증가
+                score += 1.0 * weight
         
         # 연속된 키워드 매칭에 추가 점수
         for i in range(len(keywords) - 1):
             phrase = f"{keywords[i]} {keywords[i+1]}"
             if phrase in question:
-                score += 6.0  # 가중치 증가
+                score += 4.0
             if phrase in answer:
-                score += 2.0  # 가중치 증가
+                score += 2.0
         
-        # ARUMLOCADB 특별 처리
-        if 'ARUMLOCADB' in question:
-            score += 15.0  # 매우 높은 점수
-        if 'ARUMLOCADB' in answer:
-            score += 8.0
+        # 특정 조합에 높은 점수
+        combinations = [
+            ('포스', '재설치'),
+            ('POS', '재설치'),
+            ('프로그램', '재설치'),
+            ('데이터', '백업'),
+            ('키오스크', '터치'),
+            ('프린터', '오류'),
+            ('DB', '늘리기'),
+            ('데이터베이스', '늘리기')
+        ]
+        
+        for combo in combinations:
+            if combo[0] in question and combo[1] in question:
+                score += 8.0
+            if combo[0] in answer and combo[1] in answer:
+                score += 4.0
         
         return score
 
@@ -310,7 +303,7 @@ class MongoDBSearchService:
             text = re.sub(r'[^\w\s가-힣]', ' ', text)
             words = text.split()
             
-            # 불용어 목록 (더 구체적으로) - '방법' 제거
+            # 불용어 목록 (더 구체적으로) - 핵심 키워드는 제거하지 않음
             stop_words = {
                 '어떻게', '해요', '돼요', '있어요', '하나요', '오류', '발생', '했어요', '안돼요',
                 '이', '가', '을', '를', '의', '에', '에서', '로', '으로', '와', '과', '도', '만', 
@@ -318,23 +311,35 @@ class MongoDBSearchService:
                 '문제', '해결', '알려', '주세요', '요청', '문의', '도움', '좀', '요',
                 '아니', '그게', '아니라', '그것도', '방법이긴', '한데', '다른', '매장', '점주에게',
                 '들으니', '하드디스크', '용량만큼', '사용이', '가능하게', '늘려주는', '방법이',
-                '있다고', '하던데', '뭔소리야', '인가', '뭔가를', '늘리는', '방법이', '있다며'
+                '있다고', '하던데', '뭔소리야', '인가', '뭔가를', '늘리는', '방법이', '있다며',
+                '안녕하세요', '안녕', '하세요', '안녕하', '세요', '안녕하세요?', '안녕하세요!',
+                '어떤', '도움이', '필요하신가요', '필요하신가요?', '필요하신가요!',
+                '도움이', '필요해요', '필요합니다', '필요해', '필요하', '도움', '필요',
+                '그러면', '그럼', '그래서', '그리고', '또한', '또는', '하지만', '그런데'
             }
             
             # 불용어 제거 및 2글자 이상만 선택
             keywords = [word for word in words if word not in stop_words and len(word) >= 2]
             
-            # 핵심 키워드 우선순위 부여
-            priority_keywords = ['DB', '데이터베이스', '공간', '늘리기', '늘리', '방법', 'ARUMLOCADB', 'TABLE']
+            # 핵심 키워드 우선순위 부여 (확장)
+            priority_keywords = [
+                'DB', '데이터베이스', '공간', '늘리기', '늘리', '방법', 'ARUMLOCADB', 'TABLE',
+                '포스', 'POS', '프로그램', '설치', '재설치', '데이터', '백업', '복원',
+                '키오스크', '터치', '프린터', '인쇄', '출력', '오류', '에러', '문제',
+                '연결', '설정', '네트워크', '와이파이', 'WiFi', '결제', '환불', '취소',
+                '로그인', '로그아웃', '비밀번호', '아이디', '계정', '업데이트', '다운로드'
+            ]
+            
             filtered_keywords = []
             
+            # 우선순위 키워드를 먼저 추가
             for keyword in keywords:
                 if keyword in priority_keywords:
                     filtered_keywords.insert(0, keyword)  # 우선순위 키워드를 앞에 배치
                 else:
                     filtered_keywords.append(keyword)
             
-            return filtered_keywords[:5]  # 상위 5개만 반환
+            return filtered_keywords[:8]  # 상위 8개까지 반환
             
         except Exception as e:
             logging.error(f"Error extracting keywords: {str(e)}")

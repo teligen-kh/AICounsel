@@ -5,6 +5,7 @@ from ..config import settings
 from .mongodb_search_service import MongoDBSearchService
 from .conversation_algorithm import ConversationAlgorithm
 from .formatting_service import FormattingService
+from .model_manager import get_model_manager, ModelType
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import os
 import logging
@@ -27,16 +28,21 @@ class IntentType(Enum):
     UNKNOWN = "unknown"  # 알 수 없음
 
 class LLMService:
-    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True):
+    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, model_type: str = ModelType.LLAMA_3_1_8B.value):
         """
         LLM 서비스 초기화
         
         Args:
             db: MongoDB 데이터베이스 연결
             use_db_priority: DB 우선 검색 모드 사용 여부
+            model_type: 사용할 모델 타입
         """
         self.db = db
         self.use_db_priority = use_db_priority
+        self.model_type = model_type
+        
+        # 모델 매니저 가져오기
+        self.model_manager = get_model_manager()
         
         # MongoDB 검색 서비스 초기화
         if db is not None and use_db_priority:
@@ -64,14 +70,40 @@ class LLMService:
             'processing_times': []  # 모든 처리 시간 기록
         }
         
-        # LLaMA 3.1 8B Instruct 모델 경로
-        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
-                                "models", "Llama-3.1-8B-Instruct")
-        
-        # 토크나이저와 모델 로드 (비동기로 미리 로딩)
-        self.tokenizer = None
-        self.model = None
-        self._load_model_async(model_path)
+        # 모델 로딩
+        self._load_model_sync(model_type)
+
+    def _load_model_sync(self, model_type: str):
+        """모델을 동기적으로 로딩합니다."""
+        try:
+            logging.info(f"Loading model: {model_type}")
+            success = self.model_manager.load_model(model_type)
+            if success:
+                logging.info(f"Model {model_type} loaded successfully")
+            else:
+                logging.error(f"Failed to load model {model_type}")
+        except Exception as e:
+            logging.error(f"Failed to load model {model_type}: {str(e)}")
+    
+    def switch_model(self, model_type: str) -> bool:
+        """다른 모델로 전환합니다."""
+        try:
+            success = self.model_manager.switch_model(model_type)
+            if success:
+                self.model_type = model_type
+                logging.info(f"Switched to model: {model_type}")
+            return success
+        except Exception as e:
+            logging.error(f"Failed to switch model: {str(e)}")
+            return False
+    
+    def get_current_model(self):
+        """현재 모델을 반환합니다."""
+        return self.model_manager.get_current_model()
+    
+    def get_current_model_config(self):
+        """현재 모델 설정을 반환합니다."""
+        return self.model_manager.get_current_model_config()
 
     def _load_model_async(self, model_path: str):
         """모델을 비동기로 로딩합니다."""
@@ -167,52 +199,56 @@ class LLMService:
         llama_start_time = time.time()
         
         try:
-            # 전역 LLM 서비스 인스턴스 확인
-            try:
-                from ..main import get_llm_service
-                global_llm_service = get_llm_service()
-                if global_llm_service and global_llm_service.model and global_llm_service.tokenizer:
-                    # 전역 인스턴스의 모델 사용
-                    response = await self.conversation_algorithm._generate_llama_casual_response(
-                        message, global_llm_service.model, global_llm_service.tokenizer
-                    )
-                    self.response_stats['llama_responses'] += 1
-                else:
-                    # 전역 인스턴스가 없거나 모델이 로드되지 않은 경우
-                    if self.model and self.tokenizer:
+            # 현재 모델 가져오기
+            current_model = self.get_current_model()
+            if current_model:
+                model, tokenizer = current_model
+                config = self.get_current_model_config()
+                
+                # 전역 LLM 서비스 인스턴스 확인
+                try:
+                    from ..main import get_llm_service
+                    global_llm_service = get_llm_service()
+                    if global_llm_service:
+                        # 전역 인스턴스의 모델 사용
                         response = await self.conversation_algorithm._generate_llama_casual_response(
-                            message, self.model, self.tokenizer
+                            message, model, tokenizer, config
                         )
                         self.response_stats['llama_responses'] += 1
                     else:
-                        # 모델 로딩 대기
-                        logging.warning("LLaMA model not loaded yet, waiting for model initialization...")
-                        
-                        # 최대 10초 대기 (서버 시작 시 이미 로딩 중이므로 짧게)
-                        max_wait_time = 10
-                        wait_time = 0
-                        while not (self.model and self.tokenizer) and wait_time < max_wait_time:
-                            await asyncio.sleep(1)
-                            wait_time += 1
-                        
-                        if self.model and self.tokenizer:
-                            response = await self.conversation_algorithm._generate_llama_casual_response(
-                                message, self.model, self.tokenizer
-                            )
-                            self.response_stats['llama_responses'] += 1
-                        else:
-                            # 모델 로딩 실패 시 기본 응답
-                            logging.error("LLaMA model failed to load within timeout")
-                            return "안녕하세요! 일상적인 대화를 나누고 싶으시군요. 어떤 이야기를 하고 싶으신가요?"
-            except ImportError:
-                # main 모듈을 import할 수 없는 경우 (순환 참조 방지)
-                if self.model and self.tokenizer:
+                        # 현재 인스턴스의 모델 사용
+                        response = await self.conversation_algorithm._generate_llama_casual_response(
+                            message, model, tokenizer, config
+                        )
+                        self.response_stats['llama_responses'] += 1
+                except ImportError:
+                    # main 모듈을 import할 수 없는 경우
                     response = await self.conversation_algorithm._generate_llama_casual_response(
-                        message, self.model, self.tokenizer
+                        message, model, tokenizer, config
+                    )
+                    self.response_stats['llama_responses'] += 1
+            else:
+                # 모델 로딩 대기
+                logging.warning("LLM model not loaded yet, waiting for model initialization...")
+                
+                # 최대 3초 대기 (동기 로딩으로 변경했으므로 짧게)
+                max_wait_time = 3
+                wait_time = 0
+                while not self.get_current_model() and wait_time < max_wait_time:
+                    await asyncio.sleep(0.5)
+                    wait_time += 0.5
+                
+                current_model = self.get_current_model()
+                if current_model:
+                    model, tokenizer = current_model
+                    config = self.get_current_model_config()
+                    response = await self.conversation_algorithm._generate_llama_casual_response(
+                        message, model, tokenizer, config
                     )
                     self.response_stats['llama_responses'] += 1
                 else:
-                    # 기본 응답
+                    # 모델 로딩 실패 시 기본 응답
+                    logging.error("LLM model failed to load within timeout")
                     return "안녕하세요! 일상적인 대화를 나누고 싶으시군요. 어떤 이야기를 하고 싶으신가요?"
             
             llama_time = (time.time() - llama_start_time) * 1000
@@ -263,12 +299,12 @@ class LLMService:
                             # 모델 로딩 대기 (서버 시작 시 이미 로딩 중이므로 짧게)
                             logging.warning("LLaMA model not loaded yet, waiting for model initialization...")
                             
-                            # 최대 10초 대기
-                            max_wait_time = 10
+                            # 최대 3초 대기 (동기 로딩으로 변경했으므로 짧게)
+                            max_wait_time = 3
                             wait_time = 0
                             while not (self.model and self.tokenizer) and wait_time < max_wait_time:
-                                await asyncio.sleep(1)
-                                wait_time += 1
+                                await asyncio.sleep(0.5)
+                                wait_time += 0.5
                             
                             if self.model and self.tokenizer:
                                 response = await self.conversation_algorithm._generate_llama_professional_response(

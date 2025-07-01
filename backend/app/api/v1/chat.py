@@ -4,6 +4,7 @@ from datetime import datetime
 from ...models.chat import ChatMessage, ChatResponse
 from ...services.chat_service import ChatService
 from ...services.llm_service import LLMService
+from ...services.model_manager import get_model_manager, ModelType
 from ...database import get_database
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -40,63 +41,76 @@ class StatsResponse(BaseModel):
     min_processing_time: float
     max_processing_time: float
 
+class ChatRequest(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    response: str
+    conversation_id: str
+
+class ModelSwitchRequest(BaseModel):
+    model_type: str
+
+class ModelStatusResponse(BaseModel):
+    current_model: str
+    available_models: List[str]
+    loaded_models: List[str]
+
 @router.post("/chat", response_model=ChatResponse)
-async def process_chat(
-    message: ChatMessage,
-    use_db_priority: bool = Query(True, description="DB 우선 검색 모드 사용 여부"),
-    db = Depends(get_database)
-):
+async def chat(request: ChatRequest, db=Depends(get_database)):
+    """채팅 API"""
     try:
-        import logging
-        logging.info(f"Received chat message: {message.content[:50]}...")
-        
-        # LLM 서비스 가져오기
-        llm_service = get_llm_service(db)
-        logging.info("LLM service initialized")
-        
-        # DB 우선 검색 모드 설정
-        llm_service.set_db_priority_mode(use_db_priority)
-        logging.info(f"DB priority mode set to: {use_db_priority}")
-        
-        # 채팅 서비스 초기화
+        logging.info(f"Received chat request: {request.message}")
         chat_service = ChatService(db)
-        logging.info("Chat service initialized")
-        
-        # 메시지 저장
-        await chat_service.save_message(message)
-        logging.info("Message saved to database")
-        
-        # LLM 응답 생성
-        response_text = await llm_service.process_message(message.content, message.session_id)
-        logging.info(f"Generated response: {response_text[:50]}...")
-        logging.info(f"Full response with newlines: {repr(response_text)}")
-        
-        # 응답 메시지 생성
-        assistant_message = ChatMessage(
-            content=response_text,
-            role="assistant",
-            session_id=message.session_id,
-            timestamp=datetime.now()
-        )
-        
-        # 응답 메시지 저장
-        await chat_service.save_message(assistant_message)
-        logging.info("Assistant message saved to database")
-        
-        return ChatResponse(
-            response=response_text,
-            context={
-                "model": "llama2-chat",
-                "db_priority_mode": use_db_priority
-            }
-        )
+        logging.info("ChatService initialized")
+        response = await chat_service.process_message(request.message, request.conversation_id)
+        logging.info(f"Generated response: {response[:100]}...")
+        return ChatResponse(response=response, conversation_id=request.conversation_id or "new")
     except Exception as e:
-        import logging
-        logging.error(f"Error in process_chat: {str(e)}")
-        logging.error(f"Error type: {type(e)}")
+        logging.error(f"Chat error: {str(e)}")
         import traceback
         logging.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.post("/switch-model")
+async def switch_model(request: ModelSwitchRequest):
+    """모델 전환 API"""
+    try:
+        model_manager = get_model_manager()
+        
+        # 사용 가능한 모델인지 확인
+        if request.model_type not in model_manager.get_available_models():
+            raise HTTPException(status_code=400, detail=f"Unknown model type: {request.model_type}")
+        
+        # 모델 전환
+        success = model_manager.switch_model(request.model_type)
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to switch to model: {request.model_type}")
+        
+        return {"message": f"Successfully switched to {request.model_type}", "current_model": request.model_type}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Model switch error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/model-status", response_model=ModelStatusResponse)
+async def get_model_status():
+    """모델 상태 확인 API"""
+    try:
+        model_manager = get_model_manager()
+        
+        return ModelStatusResponse(
+            current_model=model_manager.current_model or "none",
+            available_models=model_manager.get_available_models(),
+            loaded_models=model_manager.get_loaded_models()
+        )
+        
+    except Exception as e:
+        logging.error(f"Model status error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/chat/history/{session_id}", response_model=List[ChatMessage])
 async def get_chat_history(

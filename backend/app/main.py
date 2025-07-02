@@ -6,7 +6,9 @@ from .config import settings
 from .database import connect_to_mongo, close_mongo_connection, get_database
 from .api import chat, analysis
 from .services.llm_service import LLMService
+from .services.chat_service import ChatService
 from .services.model_manager import get_model_manager, ModelType
+from .dependencies import set_llm_service, set_chat_service
 import logging
 import os
 import json
@@ -33,8 +35,9 @@ app.include_router(knowledge_router, prefix="/api/v1", tags=["knowledge"])
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
 
-# 전역 LLM 서비스 인스턴스
+# 전역 서비스 인스턴스들
 llm_service = None
+chat_service = None
 
 # 모델 상태 파일 경로
 MODEL_STATUS_FILE = "model_status.json"
@@ -43,6 +46,10 @@ def get_llm_service():
     """전역 LLM 서비스 인스턴스를 반환합니다."""
     return llm_service
 
+def get_chat_service():
+    """전역 ChatService 인스턴스를 반환합니다."""
+    return chat_service
+
 def save_model_status(loaded: bool, timestamp: float):
     """모델 로딩 상태를 파일에 저장합니다."""
     try:
@@ -50,7 +57,7 @@ def save_model_status(loaded: bool, timestamp: float):
             "loaded": loaded,
             "timestamp": timestamp,
             "model_path": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                                     "models", "Llama-3.1-8B-Instruct")
+                                     "models", "Polyglot-Ko-5.8B")
         }
         with open(MODEL_STATUS_FILE, 'w', encoding='utf-8') as f:
             json.dump(status, f, ensure_ascii=False, indent=2)
@@ -70,12 +77,12 @@ def load_model_status():
 def is_model_ready():
     """모델이 로딩되어 사용 가능한지 확인합니다."""
     global llm_service
-    return llm_service is not None and llm_service.model is not None and llm_service.tokenizer is not None
+    return llm_service is not None and llm_service.get_current_model() is not None
 
 # 이벤트 핸들러
 @app.on_event("startup")
 async def startup_db_client():
-    global llm_service
+    global llm_service, chat_service
     
     # MongoDB 연결
     await connect_to_mongo()
@@ -84,7 +91,7 @@ async def startup_db_client():
     # 모델 매니저 초기화
     model_manager = get_model_manager()
     
-    # 기본 모델 로딩 (LLaMA 3.1 8B)
+    # 기본 모델 로딩 (Polyglot-Ko-5.8B)
     try:
         logging.info("Starting model pre-loading...")
         
@@ -94,20 +101,27 @@ async def startup_db_client():
             logging.error("Failed to get database connection")
             return
         
-        # LLM 서비스 초기화 (기본 모델: LLaMA 3.1 8B)
-        llm_service = LLMService(db, use_db_priority=True, model_type=ModelType.LLAMA_3_1_8B.value)
+        # LLM 서비스 초기화 (기본 모델: Polyglot-Ko-5.8B)
+        llm_service = LLMService(db, use_db_priority=True, model_type=ModelType.POLYGLOT_KO_5_8B.value)
+        
+        # ChatService 초기화
+        chat_service = ChatService(db, llm_service=llm_service)
+        
+        # 전역 의존성에 등록
+        set_llm_service(llm_service)
+        set_chat_service(chat_service)
         
         # 모델 로딩 완료까지 대기 (최대 5분)
         max_wait_time = 300  # 5분
         wait_time = 0
         
-        while not model_manager.is_model_loaded(ModelType.LLAMA_3_1_8B.value) and wait_time < max_wait_time:
+        while not model_manager.is_model_loaded(ModelType.POLYGLOT_KO_5_8B.value) and wait_time < max_wait_time:
             import asyncio
             await asyncio.sleep(5)  # 5초마다 체크
             wait_time += 5
             logging.info(f"Waiting for model to load... ({wait_time}s)")
         
-        if model_manager.is_model_loaded(ModelType.LLAMA_3_1_8B.value):
+        if model_manager.is_model_loaded(ModelType.POLYGLOT_KO_5_8B.value):
             current_model = model_manager.get_current_model()
             if current_model:
                 model, tokenizer = current_model

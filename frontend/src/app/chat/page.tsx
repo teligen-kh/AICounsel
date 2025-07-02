@@ -43,10 +43,8 @@ export default function ChatPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          content: input,
-          role: 'user',
-          session_id: sessionId,
-          message_type: 'text'
+          message: input,
+          conversation_id: sessionId
         }),
       });
 

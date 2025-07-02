@@ -28,7 +28,7 @@ class IntentType(Enum):
     UNKNOWN = "unknown"  # 알 수 없음
 
 class LLMService:
-    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, model_type: str = ModelType.LLAMA_3_1_8B.value):
+    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, model_type: str = ModelType.POLYGLOT_KO_5_8B.value):
         """
         LLM 서비스 초기화
         
@@ -196,69 +196,8 @@ class LLMService:
 
     async def _handle_casual_conversation(self, message: str) -> str:
         """일상 대화 처리"""
-        llama_start_time = time.time()
-        
-        try:
-            # 현재 모델 가져오기
-            current_model = self.get_current_model()
-            if current_model:
-                model, tokenizer = current_model
-                config = self.get_current_model_config()
-                
-                # 전역 LLM 서비스 인스턴스 확인
-                try:
-                    from ..main import get_llm_service
-                    global_llm_service = get_llm_service()
-                    if global_llm_service:
-                        # 전역 인스턴스의 모델 사용
-                        response = await self.conversation_algorithm._generate_llama_casual_response(
-                            message, model, tokenizer, config
-                        )
-                        self.response_stats['llama_responses'] += 1
-                    else:
-                        # 현재 인스턴스의 모델 사용
-                        response = await self.conversation_algorithm._generate_llama_casual_response(
-                            message, model, tokenizer, config
-                        )
-                        self.response_stats['llama_responses'] += 1
-                except ImportError:
-                    # main 모듈을 import할 수 없는 경우
-                    response = await self.conversation_algorithm._generate_llama_casual_response(
-                        message, model, tokenizer, config
-                    )
-                    self.response_stats['llama_responses'] += 1
-            else:
-                # 모델 로딩 대기
-                logging.warning("LLM model not loaded yet, waiting for model initialization...")
-                
-                # 최대 3초 대기 (동기 로딩으로 변경했으므로 짧게)
-                max_wait_time = 3
-                wait_time = 0
-                while not self.get_current_model() and wait_time < max_wait_time:
-                    await asyncio.sleep(0.5)
-                    wait_time += 0.5
-                
-                current_model = self.get_current_model()
-                if current_model:
-                    model, tokenizer = current_model
-                    config = self.get_current_model_config()
-                    response = await self.conversation_algorithm._generate_llama_casual_response(
-                        message, model, tokenizer, config
-                    )
-                    self.response_stats['llama_responses'] += 1
-                else:
-                    # 모델 로딩 실패 시 기본 응답
-                    logging.error("LLM model failed to load within timeout")
-                    return "안녕하세요! 일상적인 대화를 나누고 싶으시군요. 어떤 이야기를 하고 싶으신가요?"
-            
-            llama_time = (time.time() - llama_start_time) * 1000
-            self.response_stats['llama_processing_time'] += llama_time
-            
-            return response
-            
-        except Exception as e:
-            logging.error(f"Error in casual conversation: {str(e)}")
-            return "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+        # 일단 기본 응답으로 안정성 확보
+        return self.conversation_algorithm._generate_casual_response(message)
 
     async def _handle_professional_conversation(self, message: str) -> str:
         """전문 상담 처리"""
@@ -273,63 +212,10 @@ class LLMService:
             db_time = (time.time() - db_start_time) * 1000
             self.response_stats['db_processing_time'] += db_time
             
-            # 2. DB 답변이 있는 경우 LLaMA로 친절하게 정리
+            # 2. DB 답변이 있는 경우 기본 포맷팅 사용
             if db_answer:
                 self.response_stats['db_responses'] += 1
-                llama_start_time = time.time()
-                
-                # 전역 LLM 서비스 인스턴스 확인
-                try:
-                    from ..main import get_llm_service
-                    global_llm_service = get_llm_service()
-                    if global_llm_service and global_llm_service.model and global_llm_service.tokenizer:
-                        # 전역 인스턴스의 모델 사용
-                        response = await self.conversation_algorithm._generate_llama_professional_response(
-                            message, db_answer, global_llm_service.model, global_llm_service.tokenizer
-                        )
-                        self.response_stats['llama_responses'] += 1
-                    else:
-                        # 전역 인스턴스가 없거나 모델이 로드되지 않은 경우
-                        if self.model and self.tokenizer:
-                            response = await self.conversation_algorithm._generate_llama_professional_response(
-                                message, db_answer, self.model, self.tokenizer
-                            )
-                            self.response_stats['llama_responses'] += 1
-                        else:
-                            # 모델 로딩 대기 (서버 시작 시 이미 로딩 중이므로 짧게)
-                            logging.warning("LLaMA model not loaded yet, waiting for model initialization...")
-                            
-                            # 최대 3초 대기 (동기 로딩으로 변경했으므로 짧게)
-                            max_wait_time = 3
-                            wait_time = 0
-                            while not (self.model and self.tokenizer) and wait_time < max_wait_time:
-                                await asyncio.sleep(0.5)
-                                wait_time += 0.5
-                            
-                            if self.model and self.tokenizer:
-                                response = await self.conversation_algorithm._generate_llama_professional_response(
-                                    message, db_answer, self.model, self.tokenizer
-                                )
-                                self.response_stats['llama_responses'] += 1
-                            else:
-                                # 모델 로딩 실패 시 기본 포맷팅 사용
-                                logging.error("LLaMA model failed to load within timeout, using basic formatting")
-                                response = self.conversation_algorithm._format_db_answer(db_answer, message)
-                except ImportError:
-                    # main 모듈을 import할 수 없는 경우 (순환 참조 방지)
-                    if self.model and self.tokenizer:
-                        response = await self.conversation_algorithm._generate_llama_professional_response(
-                            message, db_answer, self.model, self.tokenizer
-                        )
-                        self.response_stats['llama_responses'] += 1
-                    else:
-                        # 기본 포맷팅 사용
-                        response = self.conversation_algorithm._format_db_answer(db_answer, message)
-                
-                llama_time = (time.time() - llama_start_time) * 1000
-                self.response_stats['llama_processing_time'] += llama_time
-                
-                return response
+                return self._format_db_answer(db_answer)
             else:
                 # 3. DB 답변이 없는 경우 상담사 연락 안내
                 return self.conversation_algorithm.generate_no_answer_response(message)
@@ -395,40 +281,53 @@ class LLMService:
     async def _enhance_db_answer_with_llm(self, message: str, db_answer: str) -> str:
         """LLaMA 3.1 8B로 DB 답변을 개선합니다."""
         try:
-            if not self.model or not self.tokenizer:
+            current_model = self.get_current_model()
+            if not current_model:
                 return self._format_db_answer(db_answer)
             
-            prompt = f"""당신은 전문적인 AI 상담사입니다. 다음 DB 답변을 사용자에게 친절하고 이해하기 쉽게 전달해주세요.
-
-사용자 질문: {message}
-DB 답변: {db_answer}
-
-친절하고 전문적인 응답:"""
-
-            # LLaMA 3.1 8B 형식으로 입력 구성
-            conversation_text = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+            # 간단하고 명확한 프롬프트 사용
+            prompt = f"사용자 질문: {message}\n\nDB 답변: {db_answer}\n\n위 답변을 친절하고 이해하기 쉽게 정리해주세요:"
             
-            # 모델에 직접 입력
-            inputs = self.tokenizer(conversation_text, return_tensors="pt")
+            model, tokenizer = current_model
             
-            # 생성
+            # 토크나이저 설정
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            # 모델에 직접 입력 (attention_mask 명시적 설정)
+            inputs = tokenizer(
+                prompt, 
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512
+            )
+            
+            # 생성 (파라미터 최적화)
             with torch.no_grad():
-                outputs = self.model.generate(
+                outputs = model.generate(
                     inputs.input_ids,
-                    max_new_tokens=200,
+                    attention_mask=inputs.attention_mask,
+                    max_new_tokens=100,
                     temperature=0.6,
-                    top_p=0.9,
+                    top_p=0.8,
                     do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    repetition_penalty=1.1
+                    pad_token_id=tokenizer.eos_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                    repetition_penalty=1.1,
+                    num_beams=1,
+                    use_cache=True
                 )
             
             # 응답 후처리
-            response = self.tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+            response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
             response = response.strip()
             
-            return response if response else self._format_db_answer(db_answer)
+            # 응답이 너무 짧거나 의미없는 경우 기본 포맷팅 사용
+            if len(response) < 10 or response in ["", "네", "알겠습니다", "좋습니다"]:
+                return self._format_db_answer(db_answer)
+            
+            return response
             
         except Exception as e:
             logging.error(f"Error enhancing DB answer with LLM: {str(e)}")
@@ -450,11 +349,14 @@ DB 답변: {db_answer}
             response = response.replace('4. ', '\n4. ')
             
             # 응답 길이 제한 (문자 수 기준)
-            if len(response) > 400:  # 400자로 제한
-                response = response[:400] + "..."
+            if len(response) > 300:  # 300자로 제한
+                response = response[:300] + "..."
             
             # 불필요한 줄바꿈 정리
             response = '\n'.join(line.strip() for line in response.split('\n') if line.strip())
+            
+            # 친절한 마무리 추가
+            response += "\n\n도움이 되셨나요? 다른 질문이 있으시면 언제든 말씀해 주세요."
             
             return response
             

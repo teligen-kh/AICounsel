@@ -6,28 +6,12 @@ from ...services.chat_service import ChatService
 from ...services.llm_service import LLMService
 from ...services.model_manager import get_model_manager, ModelType
 from ...database import get_database
+from ...dependencies import get_chat_service, get_llm_service
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import logging
 
 router = APIRouter()
-
-def get_llm_service(db) -> LLMService:
-    """전역 LLM 서비스 인스턴스를 반환합니다."""
-    try:
-        # main.py의 전역 인스턴스 사용
-        from ...main import get_llm_service as get_global_llm_service
-        global_service = get_global_llm_service()
-        if global_service and global_service.model and global_service.tokenizer:
-            logging.info("Using global LLM service instance")
-            return global_service
-        else:
-            logging.warning("Global LLM service not ready, creating new instance")
-            return LLMService(db=db, use_db_priority=True)
-    except ImportError:
-        # main 모듈을 import할 수 없는 경우
-        logging.warning("Cannot import main module, creating new LLM service instance")
-        return LLMService(db=db, use_db_priority=True)
 
 class StatsResponse(BaseModel):
     total_requests: int
@@ -58,11 +42,10 @@ class ModelStatusResponse(BaseModel):
     loaded_models: List[str]
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, db=Depends(get_database)):
+async def chat(request: ChatRequest, chat_service: ChatService = Depends(get_chat_service)):
     """채팅 API"""
     try:
         logging.info(f"Received chat request: {request.message}")
-        chat_service = ChatService(db)
         logging.info("ChatService initialized")
         response = await chat_service.process_message(request.message, request.conversation_id)
         logging.info(f"Generated response: {response[:100]}...")
@@ -117,10 +100,9 @@ async def get_chat_history(
     session_id: str,
     limit: int = 50,
     before: Optional[datetime] = None,
-    db = Depends(get_database)
+    chat_service: ChatService = Depends(get_chat_service)
 ):
     try:
-        chat_service = ChatService(db)
         messages = await chat_service.get_chat_history(session_id, limit, before)
         return messages
     except Exception as e:
@@ -129,32 +111,27 @@ async def get_chat_history(
 @router.post("/chat/db-mode")
 async def set_db_priority_mode(
     enabled: bool,
-    db = Depends(get_database)
+    llm_service: LLMService = Depends(get_llm_service)
 ):
     """DB 우선 검색 모드를 설정합니다."""
     try:
-        llm_service = get_llm_service(db)
         llm_service.set_db_priority_mode(enabled)
         return {"message": f"DB priority mode {'enabled' if enabled else 'disabled'}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/chat/db-mode")
-async def get_db_priority_mode(db = Depends(get_database)):
+async def get_db_priority_mode(llm_service: LLMService = Depends(get_llm_service)):
     """현재 DB 우선 검색 모드 상태를 반환합니다."""
     try:
-        llm_service = get_llm_service(db)
         return {"db_priority_mode": llm_service.use_db_priority}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/stats", response_model=StatsResponse)
-async def get_response_stats(
-    db: AsyncIOMotorDatabase = Depends(get_database)
-):
+async def get_response_stats(llm_service: LLMService = Depends(get_llm_service)):
     """응답 시간 통계를 반환합니다."""
     try:
-        llm_service = get_llm_service(db)
         stats = llm_service.get_response_stats()
         
         return StatsResponse(
@@ -174,12 +151,9 @@ async def get_response_stats(
         raise HTTPException(status_code=500, detail="통계 조회 중 오류가 발생했습니다.")
 
 @router.post("/stats/log")
-async def log_response_stats(
-    db: AsyncIOMotorDatabase = Depends(get_database)
-):
+async def log_response_stats(llm_service: LLMService = Depends(get_llm_service)):
     """응답 시간 통계를 로그로 출력합니다."""
     try:
-        llm_service = get_llm_service(db)
         llm_service.log_response_stats()
         return {"message": "통계가 로그에 출력되었습니다."}
     except Exception as e:

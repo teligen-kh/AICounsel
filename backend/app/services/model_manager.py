@@ -132,6 +132,17 @@ class ModelManager:
                 self.unload_model(self.current_model)
             
             self.current_model = model_type
+            
+            # 전역 서비스 인스턴스들 업데이트
+            try:
+                from ..dependencies import get_llm_service, get_chat_service
+                llm_service = get_llm_service()
+                if llm_service:
+                    llm_service.model_type = model_type
+                    logging.info(f"Updated global LLM service model type to: {model_type}")
+            except Exception as e:
+                logging.warning(f"Failed to update global services: {str(e)}")
+            
             logging.info(f"✅ Switched to model: {model_type}")
             return True
             

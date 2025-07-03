@@ -6,6 +6,7 @@ from .mongodb_search_service import MongoDBSearchService
 from .conversation_algorithm import ConversationAlgorithm
 from .formatting_service import FormattingService
 from .model_manager import get_model_manager, ModelType
+from .llm_processors import LLMProcessorFactory, BaseLLMProcessor
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import os
 import logging
@@ -39,12 +40,16 @@ class LLMService:
         """
         self.db = db
         self.use_db_priority = use_db_priority
-        self.model_type = model_type
+        self.model_type = model_type  # 서버 시작 시 설정된 모델 타입
         
         # 모델 매니저 가져오기
         self.model_manager = get_model_manager()
         
-        # MongoDB 검색 서비스 초기화
+        # 모델별 프로세서 초기화
+        self.processor = LLMProcessorFactory.create_processor(model_type)
+        logging.info(f"LLM 프로세서 초기화 완료: {model_type}")
+        
+        # MongoDB 검색 서비스 초기화 (비동기로 처리)
         if db is not None and use_db_priority:
             self.search_service = MongoDBSearchService(db)
         else:
@@ -91,6 +96,8 @@ class LLMService:
             success = self.model_manager.switch_model(model_type)
             if success:
                 self.model_type = model_type
+                # 프로세서도 함께 전환
+                self.processor = LLMProcessorFactory.create_processor(model_type)
                 logging.info(f"Switched to model: {model_type}")
             return success
         except Exception as e:
@@ -104,32 +111,6 @@ class LLMService:
     def get_current_model_config(self):
         """현재 모델 설정을 반환합니다."""
         return self.model_manager.get_current_model_config()
-
-    def _load_model_async(self, model_path: str):
-        """모델을 비동기로 로딩합니다."""
-        import threading
-        
-        def load_model():
-            try:
-                logging.info("Loading LLM model in background...")
-                self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    model_path,
-                    torch_dtype=torch.float16,
-                    device_map="auto",
-                    trust_remote_code=True
-                )
-                logging.info("LLM model loaded successfully in background")
-            except Exception as e:
-                logging.error(f"Failed to load LLM model: {str(e)}")
-                logging.info("Falling back to conversation algorithm only")
-                self.tokenizer = None
-                self.model = None
-        
-        # 백그라운드에서 모델 로딩
-        thread = threading.Thread(target=load_model)
-        thread.daemon = True
-        thread.start()
 
     def set_db_priority_mode(self, enabled: bool):
         """DB 우선 검색 모드를 설정합니다."""
@@ -163,11 +144,11 @@ class LLMService:
             
             if conversation_type == "casual":
                 self.response_stats['casual_conversations'] += 1
-                # 2. 일상 대화 처리 (LLaMA 3.1 8B)
+                # 2. 일상 대화 처리
                 response = await self._handle_casual_conversation(message)
             else:
                 self.response_stats['professional_conversations'] += 1
-                # 3. 전문 상담 처리 (MongoDB + LLaMA 정리)
+                # 3. 전문 상담 처리
                 response = await self._handle_professional_conversation(message)
             
             # 처리 시간 계산
@@ -194,13 +175,65 @@ class LLMService:
             logging.error(f"Error processing message: {str(e)}")
             return "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 
-    async def _handle_casual_conversation(self, message: str) -> str:
-        """일상 대화 처리"""
-        # 일단 기본 응답으로 안정성 확보
+    # ===== 업무별 메서드 분리 =====
+
+    async def get_conversation_response(self, message: str) -> str:
+        """대화 정보 받기 - 일상 대화 처리"""
+        try:
+            current_model = self.get_current_model()
+            if current_model:
+                llm_start = time.time()
+                model, tokenizer = current_model
+                
+                # 모델별 프롬프트 생성
+                prompt = self.processor.create_casual_prompt(message)
+                
+                # 토크나이저 설정
+                if tokenizer.pad_token is None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                
+                # 모델에 입력
+                inputs = tokenizer(
+                    prompt, 
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=128
+                )
+                
+                # 모델별 최적화된 파라미터 사용
+                params = self.processor.get_optimized_parameters()
+                
+                # 생성
+                with torch.no_grad():
+                    outputs = model.generate(
+                        inputs.input_ids,
+                        attention_mask=inputs.attention_mask,
+                        pad_token_id=tokenizer.eos_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
+                        **params
+                    )
+                
+                # 응답 후처리
+                response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+                response = self.processor.process_response(response)
+                
+                # 응답이 유효한 경우 사용
+                if response and len(response) > 5 and response not in ["", "네", "알겠습니다"]:
+                    llm_time = (time.time() - llm_start) * 1000
+                    self.response_stats['llama_responses'] += 1
+                    self.response_stats['llama_processing_time'] += llm_time
+                    logging.info(f"일상 대화 LLM 처리 시간: {llm_time:.2f}ms")
+                    return response
+                
+        except Exception as e:
+            logging.warning(f"일상 대화 LLM 처리 실패, 기본 응답 사용: {str(e)}")
+        
+        # 기본 응답으로 안정성 확보
         return self.conversation_algorithm._generate_casual_response(message)
 
-    async def _handle_professional_conversation(self, message: str) -> str:
-        """전문 상담 처리"""
+    async def search_and_enhance_answer(self, message: str) -> str:
+        """응답 찾기 - 전문 상담 처리"""
         db_start_time = time.time()
         
         try:
@@ -212,10 +245,13 @@ class LLMService:
             db_time = (time.time() - db_start_time) * 1000
             self.response_stats['db_processing_time'] += db_time
             
-            # 2. DB 답변이 있는 경우 기본 포맷팅 사용
+            # DB 검색 시간 로깅 추가
+            logging.info(f"DB 검색 시간: {db_time:.2f}ms")
+            
+            # 2. DB 답변이 있는 경우 LLM으로 개선
             if db_answer:
                 self.response_stats['db_responses'] += 1
-                return self._format_db_answer(db_answer)
+                return await self._enhance_db_answer_with_llm(message, db_answer)
             else:
                 # 3. DB 답변이 없는 경우 상담사 연락 안내
                 return self.conversation_algorithm.generate_no_answer_response(message)
@@ -223,6 +259,110 @@ class LLMService:
         except Exception as e:
             logging.error(f"Error in professional conversation: {str(e)}")
             return self.conversation_algorithm.generate_no_answer_response(message)
+
+    async def format_and_send_response(self, response: str) -> str:
+        """응답 정보 보내기 - 응답 포맷팅"""
+        try:
+            # 기본 포맷팅
+            formatted_response = self._format_db_answer(response)
+            return formatted_response
+        except Exception as e:
+            logging.error(f"Error formatting response: {str(e)}")
+            return response
+
+    # ===== 기존 메서드들 (리팩토링) =====
+
+    async def _handle_casual_conversation(self, message: str) -> str:
+        """일상 대화 처리 - 업무별 메서드 호출"""
+        return await self.get_conversation_response(message)
+
+    async def _handle_professional_conversation(self, message: str) -> str:
+        """전문 상담 처리 - 업무별 메서드 호출"""
+        return await self.search_and_enhance_answer(message)
+
+    async def _enhance_db_answer_with_llm(self, message: str, db_answer: str) -> str:
+        """LLM으로 DB 답변을 개선합니다."""
+        try:
+            current_model = self.get_current_model()
+            if not current_model:
+                return self._format_db_answer(db_answer)
+            
+            # 모델별 프롬프트 생성
+            prompt = self.processor.create_professional_prompt(message, db_answer)
+            
+            model, tokenizer = current_model
+            
+            # 토크나이저 설정
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            # 모델에 직접 입력
+            inputs = tokenizer(
+                prompt, 
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512
+            )
+            
+            # 모델별 최적화된 파라미터 사용
+            params = self.processor.get_optimized_parameters()
+            params['max_new_tokens'] = 100  # 전문 상담은 더 긴 응답
+            
+            # 생성
+            with torch.no_grad():
+                outputs = model.generate(
+                    inputs.input_ids,
+                    attention_mask=inputs.attention_mask,
+                    pad_token_id=tokenizer.eos_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                    **params
+                )
+            
+            # 응답 후처리
+            response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+            response = self.processor.process_response(response)
+            
+            # 응답이 너무 짧거나 의미없는 경우 기본 포맷팅 사용
+            if len(response) < 10 or response in ["", "네", "알겠습니다", "좋습니다"]:
+                return self._format_db_answer(db_answer)
+            
+            return response
+            
+        except Exception as e:
+            logging.error(f"Error enhancing DB answer with LLM: {str(e)}")
+            return self._format_db_answer(db_answer)
+
+    def _format_db_answer(self, db_answer: str) -> str:
+        """DB 답변을 포맷팅합니다."""
+        try:
+            # 기본 정리
+            response = db_answer.strip()
+            
+            # 줄바꿈 개선
+            response = response.replace('\\n', '\n')
+            response = response.replace('  ', '\n')  # 두 개 이상의 공백을 줄바꿈으로
+            response = response.replace('* ', '\n• ')  # 불릿 포인트 개선
+            response = response.replace('1. ', '\n1. ')  # 번호 매기기 개선
+            response = response.replace('2. ', '\n2. ')
+            response = response.replace('3. ', '\n3. ')
+            response = response.replace('4. ', '\n4. ')
+            
+            # 응답 길이 제한 (문자 수 기준)
+            if len(response) > 300:  # 300자로 제한
+                response = response[:300] + "..."
+            
+            # 불필요한 줄바꿈 정리
+            response = '\n'.join(line.strip() for line in response.split('\n') if line.strip())
+            
+            # 친절한 마무리 추가
+            response += "\n\n도움이 되셨나요? 다른 질문이 있으시면 언제든 말씀해 주세요."
+            
+            return response
+            
+        except Exception as e:
+            logging.error(f"Error formatting DB answer: {str(e)}")
+            return db_answer
 
     def _format_response(self, response: str) -> str:
         """응답을 포맷팅합니다."""
@@ -277,89 +417,3 @@ class LLMService:
         avg_llama_time = stats.get('avg_llama_processing_time', 0)
         logging.info(f"평균 LLaMA 처리 시간: {avg_llama_time:.2f}ms")
         logging.info("=" * 60)
-
-    async def _enhance_db_answer_with_llm(self, message: str, db_answer: str) -> str:
-        """LLaMA 3.1 8B로 DB 답변을 개선합니다."""
-        try:
-            current_model = self.get_current_model()
-            if not current_model:
-                return self._format_db_answer(db_answer)
-            
-            # 간단하고 명확한 프롬프트 사용
-            prompt = f"사용자 질문: {message}\n\nDB 답변: {db_answer}\n\n위 답변을 친절하고 이해하기 쉽게 정리해주세요:"
-            
-            model, tokenizer = current_model
-            
-            # 토크나이저 설정
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            
-            # 모델에 직접 입력 (attention_mask 명시적 설정)
-            inputs = tokenizer(
-                prompt, 
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=512
-            )
-            
-            # 생성 (파라미터 최적화)
-            with torch.no_grad():
-                outputs = model.generate(
-                    inputs.input_ids,
-                    attention_mask=inputs.attention_mask,
-                    max_new_tokens=100,
-                    temperature=0.6,
-                    top_p=0.8,
-                    do_sample=True,
-                    pad_token_id=tokenizer.eos_token_id,
-                    eos_token_id=tokenizer.eos_token_id,
-                    repetition_penalty=1.1,
-                    num_beams=1,
-                    use_cache=True
-                )
-            
-            # 응답 후처리
-            response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-            response = response.strip()
-            
-            # 응답이 너무 짧거나 의미없는 경우 기본 포맷팅 사용
-            if len(response) < 10 or response in ["", "네", "알겠습니다", "좋습니다"]:
-                return self._format_db_answer(db_answer)
-            
-            return response
-            
-        except Exception as e:
-            logging.error(f"Error enhancing DB answer with LLM: {str(e)}")
-            return self._format_db_answer(db_answer)
-
-    def _format_db_answer(self, db_answer: str) -> str:
-        """DB 답변을 포맷팅합니다."""
-        try:
-            # 기본 정리
-            response = db_answer.strip()
-            
-            # 줄바꿈 개선
-            response = response.replace('\\n', '\n')
-            response = response.replace('  ', '\n')  # 두 개 이상의 공백을 줄바꿈으로
-            response = response.replace('* ', '\n• ')  # 불릿 포인트 개선
-            response = response.replace('1. ', '\n1. ')  # 번호 매기기 개선
-            response = response.replace('2. ', '\n2. ')
-            response = response.replace('3. ', '\n3. ')
-            response = response.replace('4. ', '\n4. ')
-            
-            # 응답 길이 제한 (문자 수 기준)
-            if len(response) > 300:  # 300자로 제한
-                response = response[:300] + "..."
-            
-            # 불필요한 줄바꿈 정리
-            response = '\n'.join(line.strip() for line in response.split('\n') if line.strip())
-            
-            # 친절한 마무리 추가
-            response += "\n\n도움이 되셨나요? 다른 질문이 있으시면 언제든 말씀해 주세요."
-            
-            return response
-            
-        except Exception as e:
-            logging.error(f"Error formatting DB answer: {str(e)}")
-            return db_answer

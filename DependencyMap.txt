@@ -1,0 +1,207 @@
+# AI Counsel 프로젝트 의존성 맵
+# 마지막 업데이트: 2024-12-03
+
+## 📁 핵심 파일 의존성 관계
+
+### 1. main.py (애플리케이션 진입점)
+```
+main.py
+├── fastapi (웹 프레임워크)
+├── fastapi.middleware.cors (CORS 미들웨어)
+├── motor.motor_asyncio (MongoDB 비동기 드라이버)
+├── uvicorn (ASGI 서버)
+├── app.dependencies (의존성 주입)
+├── app.services.chat_service (채팅 서비스)
+├── app.services.llm_service (LLM 서비스)
+├── app.routers.chat (채팅 라우터)
+└── app.services.model_manager (모델 관리자)
+```
+
+### 2. app/dependencies.py (의존성 주입 관리)
+```
+dependencies.py
+├── app.database (데이터베이스 연결)
+├── app.services.llm_service (LLM 서비스)
+├── app.services.chat_service (채팅 서비스)
+├── app.services.mongodb_search_service (검색 서비스)
+├── app.services.conversation_algorithm (대화 알고리즘)
+├── app.services.formatting_service (포맷팅 서비스)
+└── app.services.model_manager (모델 관리자)
+```
+
+### 3. app/services/chat_service.py (채팅 서비스)
+```
+chat_service.py
+├── app.services.llm_service (LLM 서비스)
+├── app.services.mongodb_search_service (검색 서비스)
+├── app.services.conversation_algorithm (대화 알고리즘)
+├── app.services.formatting_service (포맷팅 서비스)
+└── app.services.model_manager (모델 관리자)
+```
+
+### 4. app/services/llm_service.py (LLM 서비스)
+```
+llm_service.py
+├── app.services.llm_processors (모델별 프로세서)
+├── app.services.mongodb_search_service (검색 서비스)
+├── app.services.conversation_algorithm (대화 알고리즘)
+├── app.services.formatting_service (포맷팅 서비스)
+├── app.services.model_manager (모델 관리자)
+└── transformers (Hugging Face 라이브러리)
+```
+
+### 5. app/services/llm_processors.py (모델별 프로세서)
+```
+llm_processors.py
+├── abc (추상 클래스)
+├── typing (타입 힌트)
+└── logging (로깅)
+```
+
+### 6. app/routers/chat.py (채팅 API 라우터)
+```
+chat.py
+├── fastapi (웹 프레임워크)
+├── app.dependencies (의존성 주입)
+├── app.services.chat_service (채팅 서비스)
+├── app.services.llm_service (LLM 서비스)
+└── pydantic (데이터 검증)
+```
+
+## 🔄 순환 의존성 위험 구간
+
+### ⚠️ 주의: 순환 의존성 가능성
+```
+dependencies.py ↔ chat_service.py ↔ llm_service.py
+```
+
+### 🔧 해결 방법
+- 의존성 주입을 통한 느슨한 결합
+- 인터페이스 기반 설계
+- 서비스 팩토리 패턴 사용
+
+## 📊 API 엔드포인트 의존성
+
+### POST /api/v1/chat/send
+```
+chat.py → dependencies.py → chat_service.py → llm_service.py
+```
+
+### POST /api/v1/chat/switch-model
+```
+chat.py → dependencies.py → chat_service.py → llm_service.py → model_manager.py
+```
+
+### GET /api/v1/chat/model-status
+```
+chat.py → dependencies.py → chat_service.py → llm_service.py → model_manager.py
+```
+
+## 🛠️ 수정 시 영향도 체크리스트
+
+### 1. 모델 관련 수정 시
+- [ ] app/services/model_manager.py
+- [ ] app/services/llm_service.py
+- [ ] app/services/llm_processors.py
+- [ ] app/dependencies.py
+- [ ] app/main.py (기본 모델 설정)
+
+### 2. API 엔드포인트 수정 시
+- [ ] app/routers/chat.py
+- [ ] app/services/chat_service.py
+- [ ] frontend/src/services/api.ts
+- [ ] frontend/src/app/chat/page.tsx
+
+### 3. 데이터베이스 관련 수정 시
+- [ ] app/database.py
+- [ ] app/services/mongodb_search_service.py
+- [ ] app/dependencies.py
+
+### 4. 서비스 로직 수정 시
+- [ ] app/services/chat_service.py
+- [ ] app/services/llm_service.py
+- [ ] app/services/conversation_algorithm.py
+- [ ] app/dependencies.py
+
+## 🔍 자주 발생하는 문제점
+
+### 1. Import 경로 문제
+```
+❌ from .model_manager import ...
+✅ from .services.model_manager import ...
+```
+
+### 2. 순환 Import 문제
+```
+❌ chat_service.py ↔ llm_service.py 직접 import
+✅ dependencies.py를 통한 의존성 주입
+```
+
+### 3. API 경로 불일치
+```
+❌ 프론트엔드: /api/v1/chat
+✅ 백엔드: /api/v1/chat/send
+```
+
+### 4. 비동기 의존성 주입 문제
+```
+❌ def get_database() → await 없이 호출
+✅ async def get_database() → await로 호출
+❌ get_chat_service_dependency() → await 없이 호출
+✅ await get_chat_service_dependency() → await로 호출
+```
+
+## 📝 수정 시 체크 포인트
+
+### 코드 수정 전
+1. [ ] 이 파일이 어떤 다른 파일들을 import하는가?
+2. [ ] 이 파일이 어떤 다른 파일들에 의해 import되는가?
+3. [ ] 순환 의존성이 발생할 가능성이 있는가?
+4. [ ] API 엔드포인트가 변경되는가?
+
+### 코드 수정 후
+1. [ ] Import 경로가 올바른가?
+2. [ ] 의존성 주입이 정상 작동하는가?
+3. [ ] API 응답 형식이 일치하는가?
+4. [ ] 프론트엔드와 백엔드가 동기화되었는가?
+
+## 🚀 자동화 도구
+
+### Python 의존성 분석
+```bash
+# 의존성 맵 생성
+pydeps app/main.py --show-deps
+
+# 순환 의존성 검사
+pip install import-linter
+lint-imports
+```
+
+### TypeScript 의존성 분석
+```bash
+# 의존성 그래프 생성
+npm install -g madge
+madge --image dependency-graph.svg src/
+```
+
+## 📋 현재 프로젝트 상태
+
+### ✅ 완료된 리팩토링
+- [x] 모델별 프로세서 분리
+- [x] 업무별 메서드 분리
+- [x] 의존성 주입 구현
+- [x] API 엔드포인트 정리
+
+### 🔄 진행 중인 작업
+- [x] 의존성 맵 자동 업데이트
+- [x] 순환 의존성 검사 자동화
+- [x] API 경로 일관성 검사
+- [x] 비동기 의존성 주입 수정
+
+### 📈 향후 개선사항
+- [ ] 의존성 분석 CI/CD 파이프라인 구축
+- [ ] 자동 문서화 도구 연동
+- [ ] 코드 품질 메트릭 대시보드
+
+---
+**참고**: 이 파일은 프로젝트 구조가 변경될 때마다 업데이트되어야 합니다. 

@@ -23,8 +23,9 @@ const api = axios.create({
 
 export const chatApi = {
     sendMessage: async (message: ChatMessage, useDbPriority: boolean = true): Promise<ChatResponse> => {
-        const response = await api.post<ChatResponse>('/chat', message, {
-            params: { use_db_priority: useDbPriority },
+        const response = await api.post<ChatResponse>('/chat/send', {
+            message: message.content,
+            conversation_id: message.session_id
         });
         return response.data;
     },

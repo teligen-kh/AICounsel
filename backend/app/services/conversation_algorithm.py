@@ -167,6 +167,15 @@ class ConversationAlgorithm:
         """일상 대화에 대한 응답을 생성합니다."""
         message_lower = message.lower()
         
+        # AI/사람 관련 질문 응답
+        if any(word in message_lower for word in ['ai', '사람', '인간', '봇', '봇이', '봇인', '봇이야', '봇이에요']):
+            responses = [
+                "안녕하세요! 저는 AI 상담사입니다. 알파문구 포스 시스템과 관련된 질문에 답변해드릴 수 있어요. 어떤 도움이 필요하신가요?",
+                "안녕하세요! 저는 AI 상담사입니다. 포스 시스템 사용 중 궁금한 점이나 문제가 있으시면 언제든 말씀해 주세요.",
+                "안녕하세요! 저는 AI 상담사입니다. 알파문구 포스 프로그램과 관련된 상담을 도와드리고 있어요. 무엇을 도와드릴까요?"
+            ]
+            return random.choice(responses)
+        
         # 인사 응답
         if any(word in message_lower for word in ['안녕', '하이', '반갑']):
             responses = [

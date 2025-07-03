@@ -21,30 +21,56 @@ class MongoDBSearchService:
             가장 관련성 높은 답변 또는 None
         """
         try:
+            import time
+            total_start = time.time()
+            
             # 1. 정확한 매치 검색
+            exact_start = time.time()
             exact_match = await self._search_exact_match(query)
+            exact_time = (time.time() - exact_start) * 1000
+            logging.info(f"정확한 매치 검색 시간: {exact_time:.2f}ms")
+            
             if exact_match:
                 logging.info(f"Exact match found for query: {query[:50]}...")
+                total_time = (time.time() - total_start) * 1000
+                logging.info(f"총 검색 시간: {total_time:.2f}ms")
                 return exact_match
             
             # 2. 키워드 기반 검색
             logging.info("No exact matches found, using improved keyword search")
+            keyword_start = time.time()
             keywords = self._extract_keywords(query)
+            keyword_extract_time = (time.time() - keyword_start) * 1000
+            logging.info(f"키워드 추출 시간: {keyword_extract_time:.2f}ms")
             logging.info(f"Extracted keywords: {keywords}")
             
+            keyword_search_start = time.time()
             keyword_match = await self._search_by_keywords(keywords)
+            keyword_search_time = (time.time() - keyword_search_start) * 1000
+            logging.info(f"키워드 검색 시간: {keyword_search_time:.2f}ms")
+            
             if keyword_match:
                 logging.info(f"Keyword match found for query: {query[:50]}...")
+                total_time = (time.time() - total_start) * 1000
+                logging.info(f"총 검색 시간: {total_time:.2f}ms")
                 return keyword_match
             
             # 3. 유사도 검색
+            similarity_start = time.time()
             similarity_match = await self._search_by_similarity(query)
+            similarity_time = (time.time() - similarity_start) * 1000
+            logging.info(f"유사도 검색 시간: {similarity_time:.2f}ms")
+            
             if similarity_match:
                 logging.info(f"Similarity match found for query: {query[:50]}...")
+                total_time = (time.time() - total_start) * 1000
+                logging.info(f"총 검색 시간: {total_time:.2f}ms")
                 return similarity_match
             
             # 4. DB에 답변이 없을 때 상담사 연락 안내
             logging.info(f"No relevant answer found for query: {query[:50]}...")
+            total_time = (time.time() - total_start) * 1000
+            logging.info(f"총 검색 시간: {total_time:.2f}ms")
             return self._get_consultant_contact_response(query)
             
         except Exception as e:
@@ -80,12 +106,18 @@ class MongoDBSearchService:
     async def _search_by_keywords(self, keywords: List[str]) -> Optional[str]:
         """키워드 기반 검색을 수행합니다."""
         try:
+            import time
             if not keywords:
                 return None
             
             # 모든 지식 베이스 항목을 가져와서 점수 계산
+            fetch_start = time.time()
             all_items = await self.knowledge_collection.find({}).to_list(length=None)
+            fetch_time = (time.time() - fetch_start) * 1000
+            logging.info(f"DB 데이터 가져오기 시간: {fetch_time:.2f}ms (항목 수: {len(all_items)})")
             
+            # 점수 계산
+            score_start = time.time()
             best_match = None
             best_score = 0
             
@@ -94,6 +126,9 @@ class MongoDBSearchService:
                 if score > best_score:
                     best_score = score
                     best_match = item
+            
+            score_time = (time.time() - score_start) * 1000
+            logging.info(f"점수 계산 시간: {score_time:.2f}ms (항목당 평균: {score_time/len(all_items):.3f}ms)")
             
             # 점수가 충분히 높은 경우만 반환 (임계값을 낮춤)
             if best_score >= 1.5:  # 2.0에서 1.5로 낮춤

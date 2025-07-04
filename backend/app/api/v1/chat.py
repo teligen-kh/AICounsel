@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from ...models.chat import ChatMessage, ChatResponse
 from ...services.chat_service import ChatService
@@ -25,6 +25,11 @@ class StatsResponse(BaseModel):
     min_processing_time: float
     max_processing_time: float
 
+class PerformanceMetricsResponse(BaseModel):
+    model_performance: Dict[str, Any]
+    system_metrics: Dict[str, Any]
+    llm_stats: Dict[str, Any]
+
 class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
@@ -44,16 +49,54 @@ class ModelStatusResponse(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, chat_service: ChatService = Depends(get_chat_service)):
     """채팅 API"""
+    import time
+    start_time = time.time()
+    
     try:
-        logging.info(f"Received chat request: {request.message}")
-        logging.info("ChatService initialized")
+        logging.info(f"=== API 요청 시작 ===")
+        logging.info(f"요청 시간: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.info(f"입력 메시지: '{request.message}'")
+        logging.info(f"대화 ID: {request.conversation_id}")
+        logging.info(f"메시지 길이: {len(request.message)}")
+        
+        # ChatService 초기화 확인
+        logging.info("ChatService 의존성 주입 확인...")
+        if chat_service is None:
+            logging.error("❌ ChatService가 None입니다!")
+            raise HTTPException(status_code=500, detail="ChatService 초기화 실패")
+        logging.info("✅ ChatService 의존성 주입 완료")
+        
+        # 메시지 처리 시작
+        logging.info("메시지 처리 시작...")
+        process_start = time.time()
         response = await chat_service.process_message(request.message, request.conversation_id)
-        logging.info(f"Generated response: {response[:100]}...")
+        process_time = (time.time() - process_start) * 1000
+        logging.info(f"✅ 메시지 처리 완료 - 시간: {process_time:.2f}ms")
+        
+        # 응답 검증
+        logging.info(f"응답 길이: {len(response) if response else 0}")
+        logging.info(f"응답 내용: '{response[:200] if response else 'None'}...'")
+        
+        if not response or len(response.strip()) == 0:
+            logging.warning("⚠️ 응답이 비어있습니다!")
+            response = "죄송합니다. 응답을 생성하는 중에 문제가 발생했습니다."
+        
+        # 전체 처리 시간 계산
+        total_time = (time.time() - start_time) * 1000
+        logging.info(f"=== API 요청 완료 ===")
+        logging.info(f"전체 처리 시간: {total_time:.2f}ms")
+        logging.info(f"메시지 처리 시간: {process_time:.2f}ms")
+        logging.info(f"API 오버헤드: {total_time - process_time:.2f}ms")
+        
         return ChatResponse(response=response, conversation_id=request.conversation_id or "new")
+        
     except Exception as e:
-        logging.error(f"Chat error: {str(e)}")
+        error_time = (time.time() - start_time) * 1000
+        logging.error(f"=== API 오류 발생 ===")
+        logging.error(f"오류 발생 시간: {error_time:.2f}ms")
+        logging.error(f"오류 내용: {str(e)}")
         import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
+        logging.error(f"상세 오류: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.post("/switch-model")
@@ -158,4 +201,106 @@ async def log_response_stats(llm_service: LLMService = Depends(get_llm_service))
         return {"message": "통계가 로그에 출력되었습니다."}
     except Exception as e:
         logging.error(f"Stats log error: {str(e)}")
-        raise HTTPException(status_code=500, detail="통계 로그 출력 중 오류가 발생했습니다.") 
+        raise HTTPException(status_code=500, detail="통계 로그 출력 중 오류가 발생했습니다.")
+
+# ===== 성능 모니터링 API =====
+
+@router.get("/performance", response_model=PerformanceMetricsResponse)
+async def get_performance_metrics(
+    llm_service: LLMService = Depends(get_llm_service)
+):
+    """종합 성능 메트릭을 반환합니다."""
+    try:
+        import psutil
+        import torch
+        
+        # 모델 매니저 성능 통계
+        model_manager = get_model_manager()
+        model_stats = model_manager.get_performance_stats()
+        
+        # 시스템 메트릭
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        
+        gpu_info = "N/A"
+        if torch.cuda.is_available():
+            gpu_memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+            gpu_memory_reserved = torch.cuda.memory_reserved() / 1024**3  # GB
+            gpu_info = {
+                "allocated_gb": round(gpu_memory_allocated, 2),
+                "reserved_gb": round(gpu_memory_reserved, 2),
+                "available": True
+            }
+        else:
+            gpu_info = {"available": False}
+        
+        system_metrics = {
+            "cpu_percent": cpu_percent,
+            "memory_percent": memory.percent,
+            "memory_used_gb": round(memory.used / 1024**3, 2),
+            "memory_total_gb": round(memory.total / 1024**3, 2),
+            "gpu": gpu_info
+        }
+        
+        # LLM 서비스 통계
+        llm_stats = llm_service.get_response_stats()
+        
+        return PerformanceMetricsResponse(
+            model_performance=model_stats,
+            system_metrics=system_metrics,
+            llm_stats=llm_stats
+        )
+        
+    except Exception as e:
+        logging.error(f"Performance metrics error: {str(e)}")
+        raise HTTPException(status_code=500, detail="성능 메트릭 조회 중 오류가 발생했습니다.")
+
+@router.post("/performance/log")
+async def log_performance_summary():
+    """성능 요약을 로그로 출력합니다."""
+    try:
+        model_manager = get_model_manager()
+        model_manager.log_performance_summary()
+        
+        llm_service = get_llm_service()
+        llm_service.log_response_stats()
+        
+        return {"message": "성능 요약이 로그에 출력되었습니다."}
+    except Exception as e:
+        logging.error(f"Performance log error: {str(e)}")
+        raise HTTPException(status_code=500, detail="성능 로그 출력 중 오류가 발생했습니다.")
+
+@router.get("/performance/system")
+async def get_system_metrics():
+    """시스템 메트릭만 반환합니다."""
+    try:
+        import psutil
+        import torch
+        
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        
+        gpu_info = "N/A"
+        if torch.cuda.is_available():
+            gpu_memory_allocated = torch.cuda.memory_allocated() / 1024**3  # GB
+            gpu_memory_reserved = torch.cuda.memory_reserved() / 1024**3  # GB
+            gpu_info = {
+                "allocated_gb": round(gpu_memory_allocated, 2),
+                "reserved_gb": round(gpu_memory_reserved, 2),
+                "available": True
+            }
+        else:
+            gpu_info = {"available": False}
+        
+        return {
+            "cpu_percent": cpu_percent,
+            "memory_percent": memory.percent,
+            "memory_used_gb": round(memory.used / 1024**3, 2),
+            "memory_total_gb": round(memory.total / 1024**3, 2),
+            "gpu": gpu_info,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logging.error(f"System metrics error: {str(e)}")
+        raise HTTPException(status_code=500, detail="시스템 메트릭 조회 중 오류가 발생했습니다.") 

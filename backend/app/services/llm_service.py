@@ -7,6 +7,7 @@ from .conversation_algorithm import ConversationAlgorithm
 from .formatting_service import FormattingService
 from .model_manager import get_model_manager, ModelType
 from .llm_processors import LLMProcessorFactory, BaseLLMProcessor
+from .llama_cpp_processor import LlamaCppProcessor
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import os
 import logging
@@ -29,7 +30,7 @@ class IntentType(Enum):
     UNKNOWN = "unknown"  # 알 수 없음
 
 class LLMService:
-    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, model_type: str = ModelType.POLYGLOT_KO_5_8B.value):
+    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, model_type: str = ModelType.POLYGLOT_KO_5_8B.value, use_llama_cpp: bool = False):
         """
         LLM 서비스 초기화
         
@@ -37,17 +38,18 @@ class LLMService:
             db: MongoDB 데이터베이스 연결
             use_db_priority: DB 우선 검색 모드 사용 여부
             model_type: 사용할 모델 타입
+            use_llama_cpp: llama-cpp-python 사용 여부
         """
         self.db = db
         self.use_db_priority = use_db_priority
         self.model_type = model_type  # 서버 시작 시 설정된 모델 타입
+        self.use_llama_cpp = use_llama_cpp
         
-        # 모델 매니저 가져오기
-        self.model_manager = get_model_manager()
-        
-        # 모델별 프로세서 초기화
-        self.processor = LLMProcessorFactory.create_processor(model_type)
-        logging.info(f"LLM 프로세서 초기화 완료: {model_type}")
+        # llama-cpp 사용 여부에 따른 초기화
+        if use_llama_cpp:
+            self._initialize_llama_cpp()
+        else:
+            self._initialize_transformers()
         
         # MongoDB 검색 서비스 초기화 (비동기로 처리)
         if db is not None and use_db_priority:
@@ -74,9 +76,60 @@ class LLMService:
             'max_processing_time': 0,
             'processing_times': []  # 모든 처리 시간 기록
         }
+
+    def _initialize_transformers(self):
+        """Transformers 기반 초기화"""
+        # 모델 매니저 가져오기
+        self.model_manager = get_model_manager()
+        
+        # 모델별 프로세서 초기화
+        self.processor = LLMProcessorFactory.create_processor(self.model_type)
+        logging.info(f"Transformers LLM 프로세서 초기화 완료: {self.model_type}")
         
         # 모델 로딩
-        self._load_model_sync(model_type)
+        self._load_model_sync(self.model_type)
+
+    def _initialize_llama_cpp(self):
+        """llama-cpp-python 기반 초기화"""
+        try:
+            # GGUF 모델 경로 설정
+            model_path = self._get_gguf_model_path()
+            
+            # llama-cpp 프로세서 초기화
+            self.llama_cpp_processor = LlamaCppProcessor(model_path, self.model_type)
+            logging.info(f"llama-cpp LLM 프로세서 초기화 완료: {self.model_type}")
+            
+        except Exception as e:
+            logging.error(f"llama-cpp 초기화 실패: {str(e)}")
+            # 폴백: transformers 사용
+            logging.info("Transformers로 폴백합니다.")
+            self.use_llama_cpp = False
+            self._initialize_transformers()
+
+    def _get_gguf_model_path(self) -> str:
+        """GGUF 모델 경로 반환"""
+        base_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "models")
+        
+        # 모델별 GGUF 파일 경로
+        gguf_paths = {
+            "polyglot-ko-5.8b": os.path.join(base_path, "polyglot-ko-5.8b-Q4_K_M.gguf"),
+            "llama-3.1-8b": os.path.join(base_path, "llama-3.1-8b-instruct-Q4_K_M.gguf"),
+            "llama-2-7b-chat": os.path.join(base_path, "llama-2-7b-chat.Q4_K_M.gguf")
+        }
+        
+        # 현재 모델에 해당하는 GGUF 파일 확인
+        if self.model_type in gguf_paths:
+            path = gguf_paths[self.model_type]
+            if os.path.exists(path):
+                return path
+        
+        # 기본값: 기존 llama-2-7b-chat 사용
+        default_path = gguf_paths["llama-2-7b-chat"]
+        if os.path.exists(default_path):
+            logging.warning(f"Requested model {self.model_type} not found, using default: {default_path}")
+            return default_path
+        
+        raise FileNotFoundError(f"No GGUF model found for {self.model_type}")
 
     def _load_model_sync(self, model_type: str):
         """모델을 동기적으로 로딩합니다."""
@@ -93,24 +146,40 @@ class LLMService:
     def switch_model(self, model_type: str) -> bool:
         """다른 모델로 전환합니다."""
         try:
-            success = self.model_manager.switch_model(model_type)
-            if success:
+            if self.use_llama_cpp:
+                # llama-cpp 모델 전환
+                model_path = self._get_gguf_model_path()
+                self.llama_cpp_processor.cleanup()
+                self.llama_cpp_processor = LlamaCppProcessor(model_path, model_type)
                 self.model_type = model_type
-                # 프로세서도 함께 전환
-                self.processor = LLMProcessorFactory.create_processor(model_type)
-                logging.info(f"Switched to model: {model_type}")
-            return success
+                logging.info(f"Switched to llama-cpp model: {model_type}")
+            else:
+                # transformers 모델 전환
+                success = self.model_manager.switch_model(model_type)
+                if success:
+                    self.model_type = model_type
+                    # 프로세서도 함께 전환
+                    self.processor = LLMProcessorFactory.create_processor(model_type)
+                    logging.info(f"Switched to transformers model: {model_type}")
+                return success
+            return True
         except Exception as e:
             logging.error(f"Failed to switch model: {str(e)}")
             return False
     
     def get_current_model(self):
         """현재 모델을 반환합니다."""
-        return self.model_manager.get_current_model()
+        if self.use_llama_cpp:
+            return self.llama_cpp_processor
+        else:
+            return self.model_manager.get_current_model()
     
     def get_current_model_config(self):
         """현재 모델 설정을 반환합니다."""
-        return self.model_manager.get_current_model_config()
+        if self.use_llama_cpp:
+            return {"type": "llama-cpp", "model_type": self.model_type}
+        else:
+            return self.model_manager.get_current_model_config()
 
     def set_db_priority_mode(self, enabled: bool):
         """DB 우선 검색 모드를 설정합니다."""
@@ -180,84 +249,237 @@ class LLMService:
     async def get_conversation_response(self, message: str) -> str:
         """대화 정보 받기 - 일상 대화 처리"""
         try:
+            logging.info(f"=== LLM 일상 대화 디버깅 시작 ===")
+            logging.info(f"입력 메시지: {message}")
+            
+            if self.use_llama_cpp:
+                # llama-cpp 사용
+                return await self._handle_llama_cpp_casual(message)
+            else:
+                # transformers 사용
+                return await self._handle_transformers_casual(message)
+                
+        except Exception as e:
+            logging.error(f"Error in get_conversation_response: {str(e)}")
+            return "죄송합니다. 일시적인 오류가 발생했습니다."
+
+    async def _handle_llama_cpp_casual(self, message: str) -> str:
+        """llama-cpp를 사용한 일상 대화 처리"""
+        try:
+            logging.info("✅ llama-cpp 모델 사용")
+            
+            # 프롬프트 생성
+            prompt = self.llama_cpp_processor.create_casual_prompt(message)
+            logging.info(f"생성된 프롬프트: {prompt[:100]}...")
+            
+            # 응답 생성
+            response = self.llama_cpp_processor.generate_response(prompt)
+            
+            if response:
+                logging.info(f"✅ llama-cpp 응답 생성 완료: {response[:100]}...")
+                return response
+            else:
+                logging.warning("llama-cpp 응답이 비어있음, 기본 응답 사용")
+                return "안녕하세요! 무엇을 도와드릴까요?"
+                
+        except Exception as e:
+            logging.error(f"llama-cpp 처리 오류: {str(e)}")
+            return "안녕하세요! 무엇을 도와드릴까요?"
+
+    async def _handle_transformers_casual(self, message: str) -> str:
+        """transformers를 사용한 일상 대화 처리"""
+        try:
             current_model = self.get_current_model()
             if current_model:
+                logging.info("✅ transformers 모델 로딩 확인됨")
                 llm_start = time.time()
                 model, tokenizer = current_model
                 
                 # 모델별 프롬프트 생성
                 prompt = self.processor.create_casual_prompt(message)
+                logging.info(f"생성된 프롬프트: {prompt[:100]}...")
                 
-                # 토크나이저 설정
+                # 토크나이저 설정 (Polyglot-Ko 공식 설정)
                 if tokenizer.pad_token is None:
-                    tokenizer.pad_token = tokenizer.eos_token
+                    tokenizer.pad_token = tokenizer.eos_token  # <|endoftext|>
+                logging.info("✅ 토크나이저 설정 완료")
                 
-                # 모델에 입력
-                inputs = tokenizer(
-                    prompt, 
-                    return_tensors="pt",
-                    padding=True,
-                    truncation=True,
-                    max_length=128
-                )
+                # 입력 인코딩
+                inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
+                logging.info(f"✅ 입력 인코딩 완료: {inputs['input_ids'].shape}")
                 
-                # 모델별 최적화된 파라미터 사용
-                params = self.processor.get_optimized_parameters()
+                # 생성 파라미터 가져오기
+                generation_params = self.processor.get_optimized_parameters()
+                logging.info(f"✅ 생성 파라미터 설정: {generation_params}")
                 
-                # 생성
+                # 모델 추론
                 with torch.no_grad():
                     outputs = model.generate(
-                        inputs.input_ids,
-                        attention_mask=inputs.attention_mask,
-                        pad_token_id=tokenizer.eos_token_id,
-                        eos_token_id=tokenizer.eos_token_id,
-                        **params
+                        **inputs,
+                        **generation_params
                     )
                 
-                # 응답 후처리
-                response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-                response = self.processor.process_response(response)
+                llm_end = time.time()
+                llm_time = (llm_end - llm_start) * 1000
+                logging.info(f"✅ 모델 추론 완료: {llm_time:.2f}ms")
                 
-                # 응답이 유효한 경우 사용
-                if response and len(response) > 5 and response not in ["", "네", "알겠습니다"]:
-                    llm_time = (time.time() - llm_start) * 1000
+                # 응답 디코딩
+                generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                logging.info(f"✅ 응답 디코딩 완료: {generated_text[:100]}...")
+                
+                # 프롬프트 제거하여 실제 응답만 추출
+                response = generated_text[len(prompt):].strip()
+                logging.info(f"✅ 프롬프트 제거 후 응답: {response[:100]}...")
+                
+                # 후처리
+                processed_response = self.processor.process_response(response)
+                logging.info(f"✅ 후처리 완료: {processed_response[:100]}...")
+                
+                if processed_response:
                     self.response_stats['llama_responses'] += 1
                     self.response_stats['llama_processing_time'] += llm_time
-                    logging.info(f"일상 대화 LLM 처리 시간: {llm_time:.2f}ms")
-                    return response
+                    return processed_response
+                else:
+                    logging.warning("후처리 후 응답이 비어있음, 기본 응답 사용")
+                    return "안녕하세요! 무엇을 도와드릴까요?"
+            else:
+                logging.error("❌ 모델이 로딩되지 않음")
+                return "안녕하세요! 무엇을 도와드릴까요?"
                 
         except Exception as e:
-            logging.warning(f"일상 대화 LLM 처리 실패, 기본 응답 사용: {str(e)}")
-        
-        # 기본 응답으로 안정성 확보
-        return self.conversation_algorithm._generate_casual_response(message)
+            logging.error(f"transformers 처리 오류: {str(e)}")
+            return "안녕하세요! 무엇을 도와드릴까요?"
 
     async def search_and_enhance_answer(self, message: str) -> str:
-        """응답 찾기 - 전문 상담 처리"""
-        db_start_time = time.time()
-        
+        """응답 찾기 - 전문 상담 처리 (LLM 전용)"""
         try:
-            # 1. MongoDB에서 관련 답변 검색
-            db_answer = None
-            if self.search_service:
-                db_answer = await self.search_service.search_answer(message)
+            logging.info(f"=== LLM 전문 상담 디버깅 시작 ===")
+            logging.info(f"입력 메시지: {message}")
             
-            db_time = (time.time() - db_start_time) * 1000
-            self.response_stats['db_processing_time'] += db_time
-            
-            # DB 검색 시간 로깅 추가
-            logging.info(f"DB 검색 시간: {db_time:.2f}ms")
-            
-            # 2. DB 답변이 있는 경우 LLM으로 개선
-            if db_answer:
-                self.response_stats['db_responses'] += 1
-                return await self._enhance_db_answer_with_llm(message, db_answer)
-            else:
-                # 3. DB 답변이 없는 경우 상담사 연락 안내
+            current_model = self.get_current_model()
+            if not current_model:
+                logging.error("❌ 모델이 로딩되지 않음")
                 return self.conversation_algorithm.generate_no_answer_response(message)
-                
+            
+            logging.info("✅ 모델 로딩 확인됨")
+            
+            # 모델별 프롬프트 생성
+            prompt = self.processor.create_professional_prompt(message, "")
+            logging.info(f"생성된 프롬프트: {prompt[:100]}...")
+            
+            model, tokenizer = current_model
+            
+            # 토크나이저 설정 (Polyglot-Ko 공식 설정)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token  # <|endoftext|>
+            logging.info("✅ 토크나이저 설정 완료")
+            
+            # 모델에 직접 입력
+            logging.info("토크나이저 처리 시작...")
+            inputs = tokenizer(
+                prompt, 
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512
+            )
+            logging.info(f"✅ 토크나이저 처리 완료 - 입력 shape: {inputs.input_ids.shape}")
+            
+            # 모델별 최적화된 파라미터 사용
+            params = self.processor.get_optimized_parameters()
+            params['max_new_tokens'] = 100  # 전문 상담은 더 긴 응답
+            logging.info(f"생성 파라미터: {params}")
+            
+            # 성능 모니터링 시작
+            generation_start = time.time()
+            prompt_length = inputs.input_ids.shape[1]
+            logging.info(f"생성 시작 - 프롬프트 길이: {prompt_length}")
+            
+            # 생성
+            logging.info("모델 생성 시작...")
+            with torch.no_grad():
+                outputs = model.generate(
+                    inputs.input_ids,
+                    attention_mask=inputs.attention_mask,
+                    **params
+                )
+            logging.info(f"✅ 모델 생성 완료 - 출력 shape: {outputs.shape}")
+            
+            # 성능 모니터링 종료
+            generation_end = time.time()
+            
+            # outputs가 텐서인지 튜플인지 확인
+            if hasattr(outputs, 'shape'):
+                # outputs가 텐서인 경우
+                response_length = outputs.shape[1] - prompt_length
+                logging.info(f"생성된 토큰 수: {response_length}")
+            else:
+                # outputs가 튜플인 경우
+                response_length = outputs[0].shape[1] - prompt_length
+                logging.info(f"생성된 토큰 수: {response_length}")
+            
+            # 성능 메트릭 로깅
+            self.processor.log_performance_metrics(generation_start, generation_end, prompt_length, response_length)
+            
+            # 응답 후처리
+            logging.info("응답 디코딩 시작...")
+            try:
+                # outputs가 텐서인지 튜플인지 확인
+                if hasattr(outputs, 'shape'):
+                    # outputs가 텐서인 경우
+                    logging.info(f"✅ outputs는 텐서입니다 - shape: {outputs.shape}")
+                    logging.info(f"입력 토큰 수: {inputs.input_ids.shape[1]}")
+                    logging.info(f"전체 출력 토큰 수: {outputs.shape[1]}")
+                    
+                    # 생성된 토큰만 추출
+                    generated_tokens = outputs[0, inputs.input_ids.shape[1]:]
+                    logging.info(f"생성된 토큰 shape: {generated_tokens.shape}")
+                    logging.info(f"생성된 토큰 내용: {generated_tokens.tolist()}")
+                    
+                    # 디코딩
+                    response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                    logging.info(f"✅ 디코딩 완료 - 원본 응답: '{response}'")
+                    logging.info(f"응답 길이: {len(response)}")
+                else:
+                    # outputs가 튜플인 경우
+                    logging.info(f"✅ outputs는 튜플입니다 - 길이: {len(outputs)}")
+                    logging.info(f"입력 토큰 수: {inputs.input_ids.shape[1]}")
+                    logging.info(f"전체 출력 토큰 수: {outputs[0].shape[1]}")
+                    
+                    # 생성된 토큰만 추출
+                    generated_tokens = outputs[0][0, inputs.input_ids.shape[1]:]
+                    logging.info(f"생성된 토큰 shape: {generated_tokens.shape}")
+                    logging.info(f"생성된 토큰 내용: {generated_tokens.tolist()}")
+                    
+                    # 디코딩
+                    response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                    logging.info(f"✅ 디코딩 완료 - 원본 응답: '{response}'")
+                    logging.info(f"응답 길이: {len(response)}")
+            except Exception as decode_error:
+                logging.error(f"❌ 디코딩 오류: {str(decode_error)}")
+                logging.error(f"outputs type: {type(outputs)}")
+                logging.error(f"outputs shape: {outputs.shape if hasattr(outputs, 'shape') else 'N/A'}")
+                logging.error(f"inputs.input_ids.shape[1]: {inputs.input_ids.shape[1]}")
+                import traceback
+                logging.error(f"상세 오류: {traceback.format_exc()}")
+                raise decode_error
+            
+            logging.info("응답 후처리 시작...")
+            response = self.processor.process_response(response)
+            logging.info(f"✅ 후처리 완료 - 최종 응답: {response}")
+            
+            # 응답이 너무 짧거나 의미없는 경우 기본 포맷팅 사용
+            if len(response) < 10 or response in ["", "네", "알겠습니다", "좋습니다"]:
+                logging.warning(f"❌ 응답이 너무 짧거나 의미없음: '{response}'")
+                return self.conversation_algorithm.generate_no_answer_response(message)
+            
+            logging.info(f"✅ LLM 전문 상담 처리 성공")
+            return response
+            
         except Exception as e:
-            logging.error(f"Error in professional conversation: {str(e)}")
+            logging.error(f"❌ LLM 전문 상담 처리 실패: {str(e)}")
+            import traceback
+            logging.error(f"상세 오류: {traceback.format_exc()}")
             return self.conversation_algorithm.generate_no_answer_response(message)
 
     async def format_and_send_response(self, response: str) -> str:
@@ -309,15 +531,24 @@ class LLMService:
             params = self.processor.get_optimized_parameters()
             params['max_new_tokens'] = 100  # 전문 상담은 더 긴 응답
             
+            # 성능 모니터링 시작
+            generation_start = time.time()
+            prompt_length = inputs.input_ids.shape[1]
+            
             # 생성
             with torch.no_grad():
                 outputs = model.generate(
                     inputs.input_ids,
                     attention_mask=inputs.attention_mask,
-                    pad_token_id=tokenizer.eos_token_id,
-                    eos_token_id=tokenizer.eos_token_id,
                     **params
                 )
+            
+            # 성능 모니터링 종료
+            generation_end = time.time()
+            response_length = outputs[0].shape[1] - prompt_length
+            
+            # 성능 메트릭 로깅
+            self.processor.log_performance_metrics(generation_start, generation_end, prompt_length, response_length)
             
             # 응답 후처리
             response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)

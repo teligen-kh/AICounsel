@@ -1,6 +1,6 @@
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from .llm_service import LLMService
-from .mongodb_search_service import MongoDBSearchService
+from .db_enhancement_service import DBEnhancementService
 from .conversation_algorithm import ConversationAlgorithm
 from .formatting_service import FormattingService
 from .model_manager import get_model_manager, ModelType
@@ -34,8 +34,8 @@ class ChatService:
         # 모델 매니저 가져오기
         self.model_manager = get_model_manager()
         
-        # MongoDB 검색 서비스
-        self.search_service = MongoDBSearchService(db)
+        # DB 연계 서비스 (LLM과 분리)
+        self.db_enhancement_service = DBEnhancementService(db)
         
         # 고객 응대 알고리즘
         self.conversation_algorithm = ConversationAlgorithm()
@@ -60,7 +60,7 @@ class ChatService:
 
     async def get_conversation_response(self, message: str) -> str:
         """
-        대화 정보 받기 - 일상 대화 처리
+        대화 정보 받기 - 일상 대화 처리 (LLM 전용)
         
         Args:
             message: 사용자 메시지
@@ -89,7 +89,7 @@ class ChatService:
 
     async def search_and_enhance_answer(self, message: str) -> str:
         """
-        응답 찾기 - 전문 상담 처리
+        응답 찾기 - 전문 상담 처리 (LLM 전용)
         
         Args:
             message: 사용자 메시지
@@ -104,7 +104,7 @@ class ChatService:
             response = await self.llm_service.search_and_enhance_answer(message)
             
             self.response_stats['professional_conversations'] += 1
-            self.response_stats['db_responses'] += 1
+            self.response_stats['llm_responses'] += 1
             
             logging.info(f"전문 상담 처리 완료: {response[:50]}...")
             return response
@@ -118,7 +118,7 @@ class ChatService:
 
     async def format_and_send_response(self, response: str) -> str:
         """
-        응답 정보 보내기 - 응답 포맷팅
+        응답 정보 보내기 - 응답 포맷팅 (LLM 전용)
         
         Args:
             response: 원본 응답
@@ -198,36 +198,26 @@ class ChatService:
             logging.error(f"메시지 처리 오류: {str(e)}")
             return "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 
-    # ===== 모델 관리 메서드 =====
+    # ===== 기존 메서드들 (호환성 유지) =====
 
     def switch_model(self, model_type: str) -> bool:
-        """
-        모델 전환
-        
-        Args:
-            model_type: 전환할 모델 타입
-            
-        Returns:
-            전환 성공 여부
-        """
+        """모델 전환 (호환성 유지)"""
         try:
-            success = self.llm_service.switch_model(model_type)
-            if success:
-                logging.info(f"모델 전환 완료: {model_type}")
+            success = self.model_manager.switch_model(model_type)
+            if success and self.llm_service:
+                self.llm_service.model_type = model_type
             return success
         except Exception as e:
             logging.error(f"모델 전환 오류: {str(e)}")
             return False
 
     def get_current_model(self):
-        """현재 모델 반환"""
-        return self.llm_service.get_current_model()
+        """현재 모델 반환 (호환성 유지)"""
+        return self.model_manager.get_current_model()
 
     def get_current_model_config(self):
-        """현재 모델 설정 반환"""
-        return self.llm_service.get_current_model_config()
-
-    # ===== 통계 메서드 =====
+        """현재 모델 설정 반환 (호환성 유지)"""
+        return self.model_manager.get_current_model_config()
 
     def get_response_stats(self) -> Dict:
         """응답 통계 반환"""
@@ -235,6 +225,12 @@ class ChatService:
         
         if stats['total_requests'] > 0:
             stats['avg_processing_time'] = stats['total_processing_time'] / stats['total_requests']
+            if stats['db_responses'] > 0:
+                stats['avg_db_processing_time'] = stats['total_processing_time'] / stats['db_responses']
+            if stats['llm_responses'] > 0:
+                stats['avg_llm_processing_time'] = stats['total_processing_time'] / stats['llm_responses']
+            else:
+                stats['avg_llm_processing_time'] = 0
             
             # 중간값 계산
             if stats['processing_times']:
@@ -242,55 +238,38 @@ class ChatService:
                 stats['median_processing_time'] = sorted_times[len(sorted_times) // 2]
         else:
             stats['avg_processing_time'] = 0
+            stats['avg_db_processing_time'] = 0
+            stats['avg_llm_processing_time'] = 0
             stats['median_processing_time'] = 0
         
         return stats
 
     def log_response_stats(self):
-        """응답 통계 로깅"""
+        """응답 통계를 로그로 출력"""
         stats = self.get_response_stats()
         
-        logging.info("=" * 60)
-        logging.info("ChatService 통계")
-        logging.info("=" * 60)
+        logging.info("=== ChatService 응답 통계 ===")
         logging.info(f"총 요청 수: {stats['total_requests']}")
-        logging.info(f"일상 대화: {stats['casual_conversations']} ({stats['casual_conversations']/stats['total_requests']*100:.1f}%)")
-        logging.info(f"전문 상담: {stats['professional_conversations']} ({stats['professional_conversations']/stats['total_requests']*100:.1f}%)")
+        logging.info(f"일상 대화: {stats['casual_conversations']}")
+        logging.info(f"전문 상담: {stats['professional_conversations']}")
         logging.info(f"DB 응답: {stats['db_responses']}")
         logging.info(f"LLM 응답: {stats['llm_responses']}")
         logging.info(f"오류: {stats['errors']}")
-        logging.info("-" * 60)
         logging.info(f"평균 처리 시간: {stats['avg_processing_time']:.2f}ms")
-        logging.info(f"중간값 처리 시간: {stats['median_processing_time']:.2f}ms")
         logging.info(f"최소 처리 시간: {stats['min_processing_time']:.2f}ms")
         logging.info(f"최대 처리 시간: {stats['max_processing_time']:.2f}ms")
-        logging.info("=" * 60)
-
-    # ===== 설정 메서드 =====
+        logging.info(f"중간값 처리 시간: {stats['median_processing_time']:.2f}ms")
+        logging.info("=============================")
 
     def set_db_priority_mode(self, enabled: bool):
-        """DB 우선 검색 모드 설정"""
-        self.llm_service.set_db_priority_mode(enabled)
-        logging.info(f"DB 우선 검색 모드: {'활성화' if enabled else '비활성화'}")
+        """DB 우선 모드 설정 (호환성 유지)"""
+        if self.llm_service:
+            self.llm_service.set_db_priority_mode(enabled)
 
     def get_model_status(self) -> Dict[str, Any]:
-        """모델 상태 정보 반환"""
-        try:
-            current_model = self.get_current_model()
-            current_config = self.get_current_model_config()
-            
-            return {
-                "current_model": self.llm_service.model_type,
-                "model_loaded": current_model is not None,
-                "model_settings": current_config,
-                "db_priority_mode": self.llm_service.use_db_priority
-            }
-        except Exception as e:
-            logging.error(f"모델 상태 조회 오류: {str(e)}")
-            return {
-                "current_model": "unknown",
-                "model_loaded": False,
-                "model_settings": None,
-                "db_priority_mode": False,
-                "error": str(e)
-            }
+        """모델 상태 반환 (호환성 유지)"""
+        return {
+            "current_model": self.model_manager.current_model,
+            "available_models": self.model_manager.get_available_models(),
+            "loaded_models": self.model_manager.get_loaded_models()
+        }

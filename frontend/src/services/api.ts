@@ -23,11 +23,44 @@ const api = axios.create({
 
 export const chatApi = {
     sendMessage: async (message: ChatMessage, useDbPriority: boolean = true): Promise<ChatResponse> => {
-        const response = await api.post<ChatResponse>('/chat/send', {
-            message: message.content,
-            conversation_id: message.session_id
-        });
-        return response.data;
+        const startTime = performance.now();
+        console.log('=== 프론트엔드 API 요청 시작 ===');
+        console.log(`요청 시간: ${new Date().toISOString()}`);
+        console.log(`메시지 내용: "${message.content}"`);
+        console.log(`세션 ID: ${message.session_id}`);
+        console.log(`메시지 길이: ${message.content.length}`);
+        
+        try {
+            const requestData = {
+                message: message.content,
+                conversation_id: message.session_id
+            };
+            console.log('요청 데이터:', requestData);
+            
+            const requestStart = performance.now();
+            const response = await api.post<ChatResponse>('/chat/send', requestData);
+            const requestTime = performance.now() - requestStart;
+            
+            console.log('=== 프론트엔드 API 응답 수신 ===');
+            console.log(`요청 처리 시간: ${requestTime.toFixed(2)}ms`);
+            console.log(`응답 상태: ${response.status}`);
+            console.log(`응답 데이터:`, response.data);
+            console.log(`응답 길이: ${response.data.response?.length || 0}`);
+            
+            const totalTime = performance.now() - startTime;
+            console.log(`전체 처리 시간: ${totalTime.toFixed(2)}ms`);
+            console.log('=== 프론트엔드 API 요청 완료 ===');
+            
+            return response.data;
+        } catch (error: any) {
+            const errorTime = performance.now() - startTime;
+            console.error('=== 프론트엔드 API 오류 발생 ===');
+            console.error(`오류 발생 시간: ${errorTime.toFixed(2)}ms`);
+            console.error('오류 내용:', error);
+            console.error('응답 데이터:', error.response?.data);
+            console.error('상태 코드:', error.response?.status);
+            throw error;
+        }
     },
 
     getChatHistory: async (sessionId: string, limit = 50): Promise<ChatMessage[]> => {

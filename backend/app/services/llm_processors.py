@@ -79,11 +79,11 @@ class PolyglotKoProcessor(BaseLLMProcessor):
         return f"질문: {message}\n답변: {db_answer}\n추가 설명: "
     
     def get_optimized_parameters(self) -> Dict[str, Any]:
-        """Polyglot-Ko 텍스트 완성용 파라미터 (매우 보수적)"""
+        """Polyglot-Ko 텍스트 완성용 파라미터 (보수적)"""
         return {
-            "max_new_tokens": 15,        # 매우 짧게
-            "temperature": 0.05,         # 매우 낮게 (일관성)
-            "top_p": 0.95,              # 높게 (안정성)
+            "max_new_tokens": 20,        # 적당히 짧게
+            "temperature": 0.1,          # 낮게 (일관성)
+            "top_p": 0.9,               # 높게 (안정성)
             "do_sample": True,           # 샘플링 활성화
             "repetition_penalty": 1.0,   # 기본값
             "num_beams": 1,             # 단일 빔
@@ -93,7 +93,7 @@ class PolyglotKoProcessor(BaseLLMProcessor):
         }
     
     def process_response(self, response: str) -> str:
-        """Polyglot-Ko 응답 후처리 (텍스트 완성 방식)"""
+        """Polyglot-Ko 응답 후처리 (텍스트 완성 방식) - 완화된 필터링"""
         # 기본 정리
         response = response.strip()
         
@@ -101,43 +101,39 @@ class PolyglotKoProcessor(BaseLLMProcessor):
         if not response:
             return ""
         
-        # 1. 명확한 노이즈 패턴 필터링
-        noise_patterns = [
-            r'#\w+',                    # 해시태그
-            r'※.*발생하고 있습니다',     # 블로그 스타일
-            r'--.*\(토론\)',            # 위키피디아 토론
-            r'\d{4}년\s+\d{1,2}월\s+\d{1,2}일',  # 날짜 패턴
-            r'바로바로바로바로',         # 반복 텍스트
-            r'^\s*[^\w가-힣]+\s*$',     # 특수문자만
+        # 1. 매우 명확한 노이즈 패턴만 필터링 (완화)
+        critical_noise_patterns = [
+            r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+',  # URL
+            r'www\.[^\s]+',  # www로 시작하는 URL
+            r'^\s*[^\w가-힣\s]+\s*$',  # 특수문자만 (완화)
         ]
         
-        for pattern in noise_patterns:
+        for pattern in critical_noise_patterns:
             if re.search(pattern, response):
-                logging.warning(f"노이즈 패턴 발견: {pattern}")
+                logging.warning(f"중요 노이즈 패턴 발견: {pattern}")
                 return ""
         
-        # 2. 응답 길이 검증
-        if len(response) < 1 or len(response) > 50:
+        # 2. 응답 길이 검증 (완화)
+        if len(response) < 1 or len(response) > 100:  # 더 길게 허용
             return ""
         
-        # 3. 명확한 키워드 필터링
-        noise_keywords = [
-            '맛집', '술집', '이자카야', '분위기좋', '소개해드리려고',
-            'Neoalpha', '토론', 'KST', 'rqproduct'
+        # 3. 매우 명확한 노이즈 키워드만 필터링 (완화)
+        critical_noise_keywords = [
+            'Neoalpha', 'rqproduct', '토론', 'KST'
         ]
         
-        for keyword in noise_keywords:
+        for keyword in critical_noise_keywords:
             if keyword in response:
-                logging.warning(f"노이즈 키워드 발견: {keyword}")
+                logging.warning(f"중요 노이즈 키워드 발견: {keyword}")
                 return ""
         
-        # 4. 기본적인 응답 품질 확인
-        if response in ["", " ", "\n", "\t", ".", "..", "..."]:
+        # 4. 기본적인 응답 품질 확인 (완화)
+        if response in ["", " ", "\n", "\t"]:
             return ""
         
-        # 5. 문장 완성 형태로 정리
-        # 마지막 문장 부호가 없으면 추가
-        if response and not response[-1] in ['.', '!', '?', '~', '^']:
+        # 5. 문장 완성 형태로 정리 (선택적)
+        # 마지막 문장 부호가 없고 응답이 짧으면 추가
+        if response and len(response) < 10 and not response[-1] in ['.', '!', '?', '~', '^']:
             response += '.'
         
         logging.info(f"✅ 후처리 완료 - 최종 응답: '{response}'")

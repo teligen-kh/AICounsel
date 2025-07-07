@@ -304,8 +304,11 @@ class LLMService:
                     tokenizer.pad_token = tokenizer.eos_token  # <|endoftext|>
                 logging.info("✅ 토크나이저 설정 완료")
                 
-                # 입력 인코딩
+                # 입력 인코딩 (token_type_ids 제거)
                 inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
+                # Polyglot-Ko가 지원하지 않는 token_type_ids 제거
+                if 'token_type_ids' in inputs:
+                    del inputs['token_type_ids']
                 logging.info(f"✅ 입력 인코딩 완료: {inputs['input_ids'].shape}")
                 
                 # 생성 파라미터 가져오기
@@ -315,7 +318,8 @@ class LLMService:
                 # 모델 추론
                 with torch.no_grad():
                     outputs = model.generate(
-                        **inputs,
+                        inputs.input_ids,
+                        attention_mask=inputs.attention_mask,
                         **generation_params
                     )
                 
@@ -374,7 +378,7 @@ class LLMService:
                 tokenizer.pad_token = tokenizer.eos_token  # <|endoftext|>
             logging.info("✅ 토크나이저 설정 완료")
             
-            # 모델에 직접 입력
+            # 모델에 직접 입력 (token_type_ids 제거)
             logging.info("토크나이저 처리 시작...")
             inputs = tokenizer(
                 prompt, 
@@ -383,11 +387,15 @@ class LLMService:
                 truncation=True,
                 max_length=512
             )
+            # Polyglot-Ko가 지원하지 않는 token_type_ids 제거
+            if 'token_type_ids' in inputs:
+                del inputs['token_type_ids']
             logging.info(f"✅ 토크나이저 처리 완료 - 입력 shape: {inputs.input_ids.shape}")
             
-            # 모델별 최적화된 파라미터 사용
+            # 모델별 최적화된 파라미터 사용 (더 보수적으로)
             params = self.processor.get_optimized_parameters()
-            params['max_new_tokens'] = 100  # 전문 상담은 더 긴 응답
+            params['max_new_tokens'] = 50  # 더 짧게
+            params['temperature'] = 0.1    # 더 낮게
             logging.info(f"생성 파라미터: {params}")
             
             # 성능 모니터링 시작
@@ -468,8 +476,8 @@ class LLMService:
             response = self.processor.process_response(response)
             logging.info(f"✅ 후처리 완료 - 최종 응답: {response}")
             
-            # 응답이 너무 짧거나 의미없는 경우 기본 포맷팅 사용
-            if len(response) < 10 or response in ["", "네", "알겠습니다", "좋습니다"]:
+            # 응답이 너무 짧거나 의미없는 경우 기본 포맷팅 사용 (완화)
+            if len(response) < 3 or response in ["", "네", "알겠습니다", "좋습니다"]:
                 logging.warning(f"❌ 응답이 너무 짧거나 의미없음: '{response}'")
                 return self.conversation_algorithm.generate_no_answer_response(message)
             

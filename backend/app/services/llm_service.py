@@ -30,19 +30,18 @@ class IntentType(Enum):
     UNKNOWN = "unknown"  # 알 수 없음
 
 class LLMService:
-    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, model_type: str = ModelType.POLYGLOT_KO_5_8B.value, use_llama_cpp: bool = False):
+    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, use_llama_cpp: bool = True):
         """
         LLM 서비스 초기화
         
         Args:
             db: MongoDB 데이터베이스 연결
             use_db_priority: DB 우선 검색 모드 사용 여부
-            model_type: 사용할 모델 타입
-            use_llama_cpp: llama-cpp-python 사용 여부
+            use_llama_cpp: llama-cpp-python 사용 여부 (기본값: True)
         """
         self.db = db
         self.use_db_priority = use_db_priority
-        self.model_type = model_type  # 서버 시작 시 설정된 모델 타입
+        self.model_type = "llama-2-7b-chat"  # 기본 모델
         self.use_llama_cpp = use_llama_cpp
         
         # llama-cpp 사용 여부에 따른 초기화
@@ -109,27 +108,12 @@ class LLMService:
     def _get_gguf_model_path(self) -> str:
         """GGUF 모델 경로 반환"""
         base_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "models")
+        model_path = os.path.join(base_path, "llama-2-7b-chat-Q4_K_M.gguf")
         
-        # 모델별 GGUF 파일 경로
-        gguf_paths = {
-            "polyglot-ko-5.8b": os.path.join(base_path, "polyglot-ko-5.8b-Q4_K_M.gguf"),
-            "llama-3.1-8b": os.path.join(base_path, "llama-3.1-8b-instruct-Q4_K_M.gguf"),
-            "llama-2-7b-chat": os.path.join(base_path, "llama-2-7b-chat.Q4_K_M.gguf")
-        }
+        if os.path.exists(model_path):
+            return model_path
         
-        # 현재 모델에 해당하는 GGUF 파일 확인
-        if self.model_type in gguf_paths:
-            path = gguf_paths[self.model_type]
-            if os.path.exists(path):
-                return path
-        
-        # 기본값: 기존 llama-2-7b-chat 사용
-        default_path = gguf_paths["llama-2-7b-chat"]
-        if os.path.exists(default_path):
-            logging.warning(f"Requested model {self.model_type} not found, using default: {default_path}")
-            return default_path
-        
-        raise FileNotFoundError(f"No GGUF model found for {self.model_type}")
+        raise FileNotFoundError(f"GGUF model not found: {model_path}")
 
     def _load_model_sync(self, model_type: str):
         """모델을 동기적으로 로딩합니다."""
@@ -199,460 +183,282 @@ class LLMService:
             conversation_id: 대화 ID
             
         Returns:
-            생성된 응답
+            str: 처리된 응답
         """
         start_time = time.time()
         self.response_stats['total_requests'] += 1
         
         try:
-            logging.info(f"Received chat message: {message[:50]}...")
+            # 1. 사용자 의도 분석
+            intent = self.conversation_algorithm.analyze_intent(message)
+            logging.info(f"사용자 의도 분석 결과: {intent}")
             
-            # 1. 대화 유형 분류
-            conversation_type = self.conversation_algorithm.classify_conversation_type(message)
-            logging.info(f"Conversation type: {conversation_type}")
-            
-            if conversation_type == "casual":
+            # 2. 의도에 따른 처리
+            if intent == IntentType.CASUAL:
                 self.response_stats['casual_conversations'] += 1
-                # 2. 일상 대화 처리
                 response = await self._handle_casual_conversation(message)
-            else:
+            elif intent == IntentType.PROFESSIONAL:
                 self.response_stats['professional_conversations'] += 1
-                # 3. 전문 상담 처리
                 response = await self._handle_professional_conversation(message)
+            else:
+                # 기본적으로 일상 대화로 처리
+                self.response_stats['casual_conversations'] += 1
+                response = await self._handle_casual_conversation(message)
             
-            # 처리 시간 계산
-            processing_time = (time.time() - start_time) * 1000
-            self.response_stats['total_processing_time'] += processing_time
-            self.response_stats['processing_times'].append(processing_time)
+            # 3. 응답 포맷팅
+            formatted_response = await self.format_and_send_response(response)
             
-            if processing_time < self.response_stats['min_processing_time']:
-                self.response_stats['min_processing_time'] = processing_time
-            if processing_time > self.response_stats['max_processing_time']:
-                self.response_stats['max_processing_time'] = processing_time
+            # 4. 통계 업데이트
+            end_time = time.time()
+            processing_time = (end_time - start_time) * 1000  # ms
+            self._update_stats(processing_time, True)
             
-            logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 상담사 응답 완료")
-            logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 처리 시간: {processing_time:.2f}ms")
-            logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 응답 내용: {response[:100]}...")
-            
-            return response
+            return formatted_response
             
         except Exception as e:
-            error_time = (time.time() - start_time) * 1000
+            logging.error(f"메시지 처리 중 오류 발생: {str(e)}")
             self.response_stats['errors'] += 1
-            self.response_stats['error_processing_time'] += error_time
             
-            logging.error(f"Error processing message: {str(e)}")
+            # 오류 처리 시간 기록
+            end_time = time.time()
+            processing_time = (end_time - start_time) * 1000
+            self._update_stats(processing_time, False)
+            
             return "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 
-    # ===== 업무별 메서드 분리 =====
-
     async def get_conversation_response(self, message: str) -> str:
-        """대화 정보 받기 - 일상 대화 처리"""
-        try:
-            logging.info(f"=== LLM 일상 대화 디버깅 시작 ===")
-            logging.info(f"입력 메시지: {message}")
+        """
+        대화 응답 생성 (간단한 버전)
+        
+        Args:
+            message: 사용자 메시지
             
+        Returns:
+            str: 생성된 응답
+        """
+        try:
             if self.use_llama_cpp:
-                # llama-cpp 사용
                 return await self._handle_llama_cpp_casual(message)
             else:
-                # transformers 사용
                 return await self._handle_transformers_casual(message)
-                
         except Exception as e:
-            logging.error(f"Error in get_conversation_response: {str(e)}")
-            return "죄송합니다. 일시적인 오류가 발생했습니다."
+            logging.error(f"대화 응답 생성 중 오류: {str(e)}")
+            return "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다."
 
     async def _handle_llama_cpp_casual(self, message: str) -> str:
         """llama-cpp를 사용한 일상 대화 처리"""
         try:
-            logging.info("✅ llama-cpp 모델 사용")
-            
             # 프롬프트 생성
             prompt = self.llama_cpp_processor.create_casual_prompt(message)
-            logging.info(f"생성된 프롬프트: {prompt[:100]}...")
             
             # 응답 생성
             response = self.llama_cpp_processor.generate_response(prompt)
             
             if response:
-                logging.info(f"✅ llama-cpp 응답 생성 완료: {response[:100]}...")
+                self.response_stats['llama_responses'] += 1
                 return response
             else:
-                logging.warning("llama-cpp 응답이 비어있음, 기본 응답 사용")
-                return "안녕하세요! 무엇을 도와드릴까요?"
+                return "죄송합니다. 적절한 응답을 생성하지 못했습니다."
                 
         except Exception as e:
-            logging.error(f"llama-cpp 처리 오류: {str(e)}")
-            return "안녕하세요! 무엇을 도와드릴까요?"
+            logging.error(f"llama-cpp 일상 대화 처리 오류: {str(e)}")
+            return "죄송합니다. 응답 생성 중 오류가 발생했습니다."
 
     async def _handle_transformers_casual(self, message: str) -> str:
-        """transformers를 사용한 일상 대화 처리"""
+        """Transformers를 사용한 일상 대화 처리"""
         try:
-            current_model = self.get_current_model()
-            if current_model:
-                logging.info("✅ transformers 모델 로딩 확인됨")
-                llm_start = time.time()
-                model, tokenizer = current_model
-                
-                # 모델별 프롬프트 생성
-                prompt = self.processor.create_casual_prompt(message)
-                logging.info(f"생성된 프롬프트: {prompt[:100]}...")
-                
-                # 토크나이저 설정 (Polyglot-Ko 공식 설정)
-                if tokenizer.pad_token is None:
-                    tokenizer.pad_token = tokenizer.eos_token  # <|endoftext|>
-                logging.info("✅ 토크나이저 설정 완료")
-                
-                # 입력 인코딩 (token_type_ids 제거)
-                inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512)
-                # Polyglot-Ko가 지원하지 않는 token_type_ids 제거
-                if 'token_type_ids' in inputs:
-                    del inputs['token_type_ids']
-                logging.info(f"✅ 입력 인코딩 완료: {inputs['input_ids'].shape}")
-                
-                # 생성 파라미터 가져오기
-                generation_params = self.processor.get_optimized_parameters()
-                logging.info(f"✅ 생성 파라미터 설정: {generation_params}")
-                
-                # 모델 추론
-                with torch.no_grad():
-                    outputs = model.generate(
-                        inputs.input_ids,
-                        attention_mask=inputs.attention_mask,
-                        **generation_params
-                    )
-                
-                llm_end = time.time()
-                llm_time = (llm_end - llm_start) * 1000
-                logging.info(f"✅ 모델 추론 완료: {llm_time:.2f}ms")
-                
-                # 응답 디코딩
-                generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-                logging.info(f"✅ 응답 디코딩 완료: {generated_text[:100]}...")
-                
-                # 프롬프트 제거하여 실제 응답만 추출
-                response = generated_text[len(prompt):].strip()
-                logging.info(f"✅ 프롬프트 제거 후 응답: {response[:100]}...")
-                
-                # 후처리
-                processed_response = self.processor.process_response(response)
-                logging.info(f"✅ 후처리 완료: {processed_response[:100]}...")
-                
-                if processed_response:
-                    self.response_stats['llama_responses'] += 1
-                    self.response_stats['llama_processing_time'] += llm_time
-                    return processed_response
-                else:
-                    logging.warning("후처리 후 응답이 비어있음, 기본 응답 사용")
-                    return "안녕하세요! 무엇을 도와드릴까요?"
+            if not self.processor:
+                raise RuntimeError("LLM processor not initialized")
+            
+            # 프롬프트 생성
+            prompt = self.processor.create_casual_prompt(message)
+            
+            # 응답 생성
+            response = self.processor.generate_response(prompt)
+            
+            if response:
+                self.response_stats['llama_responses'] += 1
+                return response
             else:
-                logging.error("❌ 모델이 로딩되지 않음")
-                return "안녕하세요! 무엇을 도와드릴까요?"
+                return "죄송합니다. 적절한 응답을 생성하지 못했습니다."
                 
         except Exception as e:
-            logging.error(f"transformers 처리 오류: {str(e)}")
-            return "안녕하세요! 무엇을 도와드릴까요?"
+            logging.error(f"Transformers 일상 대화 처리 오류: {str(e)}")
+            return "죄송합니다. 응답 생성 중 오류가 발생했습니다."
 
     async def search_and_enhance_answer(self, message: str) -> str:
-        """응답 찾기 - 전문 상담 처리 (LLM 전용)"""
+        """
+        DB 검색 후 LLM으로 답변 강화
+        
+        Args:
+            message: 사용자 메시지
+            
+        Returns:
+            str: 강화된 답변
+        """
+        if not self.search_service:
+            logging.warning("Search service not available")
+            return await self.get_conversation_response(message)
+        
         try:
-            logging.info(f"=== LLM 전문 상담 디버깅 시작 ===")
-            logging.info(f"입력 메시지: {message}")
+            # 1. DB에서 관련 답변 검색
+            db_start_time = time.time()
+            db_answer = await self.search_service.search_answer(message)
+            db_end_time = time.time()
+            db_processing_time = (db_end_time - db_start_time) * 1000
             
-            current_model = self.get_current_model()
-            if not current_model:
-                logging.error("❌ 모델이 로딩되지 않음")
-                return self.conversation_algorithm.generate_no_answer_response(message)
+            self.response_stats['db_processing_time'] += db_processing_time
             
-            logging.info("✅ 모델 로딩 확인됨")
-            
-            # 모델별 프롬프트 생성
-            prompt = self.processor.create_professional_prompt(message, "")
-            logging.info(f"생성된 프롬프트: {prompt[:100]}...")
-            
-            model, tokenizer = current_model
-            
-            # 토크나이저 설정 (Polyglot-Ko 공식 설정)
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token  # <|endoftext|>
-            logging.info("✅ 토크나이저 설정 완료")
-            
-            # 모델에 직접 입력 (token_type_ids 제거)
-            logging.info("토크나이저 처리 시작...")
-            inputs = tokenizer(
-                prompt, 
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=512
-            )
-            # Polyglot-Ko가 지원하지 않는 token_type_ids 제거
-            if 'token_type_ids' in inputs:
-                del inputs['token_type_ids']
-            logging.info(f"✅ 토크나이저 처리 완료 - 입력 shape: {inputs.input_ids.shape}")
-            
-            # 모델별 최적화된 파라미터 사용 (더 보수적으로)
-            params = self.processor.get_optimized_parameters()
-            params['max_new_tokens'] = 50  # 더 짧게
-            params['temperature'] = 0.1    # 더 낮게
-            logging.info(f"생성 파라미터: {params}")
-            
-            # 성능 모니터링 시작
-            generation_start = time.time()
-            prompt_length = inputs.input_ids.shape[1]
-            logging.info(f"생성 시작 - 프롬프트 길이: {prompt_length}")
-            
-            # 생성
-            logging.info("모델 생성 시작...")
-            with torch.no_grad():
-                outputs = model.generate(
-                    inputs.input_ids,
-                    attention_mask=inputs.attention_mask,
-                    **params
-                )
-            logging.info(f"✅ 모델 생성 완료 - 출력 shape: {outputs.shape}")
-            
-            # 성능 모니터링 종료
-            generation_end = time.time()
-            
-            # outputs가 텐서인지 튜플인지 확인
-            if hasattr(outputs, 'shape'):
-                # outputs가 텐서인 경우
-                response_length = outputs.shape[1] - prompt_length
-                logging.info(f"생성된 토큰 수: {response_length}")
+            if db_answer:
+                self.response_stats['db_responses'] += 1
+                logging.info(f"DB에서 답변 찾음: {db_answer[:100]}...")
+                
+                # 2. LLM으로 답변 강화
+                enhanced_answer = await self._enhance_db_answer_with_llm(message, db_answer)
+                return enhanced_answer
             else:
-                # outputs가 튜플인 경우
-                response_length = outputs[0].shape[1] - prompt_length
-                logging.info(f"생성된 토큰 수: {response_length}")
-            
-            # 성능 메트릭 로깅
-            self.processor.log_performance_metrics(generation_start, generation_end, prompt_length, response_length)
-            
-            # 응답 후처리
-            logging.info("응답 디코딩 시작...")
-            try:
-                # outputs가 텐서인지 튜플인지 확인
-                if hasattr(outputs, 'shape'):
-                    # outputs가 텐서인 경우
-                    logging.info(f"✅ outputs는 텐서입니다 - shape: {outputs.shape}")
-                    logging.info(f"입력 토큰 수: {inputs.input_ids.shape[1]}")
-                    logging.info(f"전체 출력 토큰 수: {outputs.shape[1]}")
-                    
-                    # 생성된 토큰만 추출
-                    generated_tokens = outputs[0, inputs.input_ids.shape[1]:]
-                    logging.info(f"생성된 토큰 shape: {generated_tokens.shape}")
-                    logging.info(f"생성된 토큰 내용: {generated_tokens.tolist()}")
-                    
-                    # 디코딩
-                    response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                    logging.info(f"✅ 디코딩 완료 - 원본 응답: '{response}'")
-                    logging.info(f"응답 길이: {len(response)}")
-                else:
-                    # outputs가 튜플인 경우
-                    logging.info(f"✅ outputs는 튜플입니다 - 길이: {len(outputs)}")
-                    logging.info(f"입력 토큰 수: {inputs.input_ids.shape[1]}")
-                    logging.info(f"전체 출력 토큰 수: {outputs[0].shape[1]}")
-                    
-                    # 생성된 토큰만 추출
-                    generated_tokens = outputs[0][0, inputs.input_ids.shape[1]:]
-                    logging.info(f"생성된 토큰 shape: {generated_tokens.shape}")
-                    logging.info(f"생성된 토큰 내용: {generated_tokens.tolist()}")
-                    
-                    # 디코딩
-                    response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-                    logging.info(f"✅ 디코딩 완료 - 원본 응답: '{response}'")
-                    logging.info(f"응답 길이: {len(response)}")
-            except Exception as decode_error:
-                logging.error(f"❌ 디코딩 오류: {str(decode_error)}")
-                logging.error(f"outputs type: {type(outputs)}")
-                logging.error(f"outputs shape: {outputs.shape if hasattr(outputs, 'shape') else 'N/A'}")
-                logging.error(f"inputs.input_ids.shape[1]: {inputs.input_ids.shape[1]}")
-                import traceback
-                logging.error(f"상세 오류: {traceback.format_exc()}")
-                raise decode_error
-            
-            logging.info("응답 후처리 시작...")
-            response = self.processor.process_response(response)
-            logging.info(f"✅ 후처리 완료 - 최종 응답: {response}")
-            
-            # 응답이 너무 짧거나 의미없는 경우 기본 포맷팅 사용 (완화)
-            if len(response) < 3 or response in ["", "네", "알겠습니다", "좋습니다"]:
-                logging.warning(f"❌ 응답이 너무 짧거나 의미없음: '{response}'")
-                return self.conversation_algorithm.generate_no_answer_response(message)
-            
-            logging.info(f"✅ LLM 전문 상담 처리 성공")
-            return response
-            
+                logging.info("DB에서 관련 답변을 찾지 못함")
+                # DB에서 답변을 찾지 못한 경우 일반 대화로 처리
+                return await self.get_conversation_response(message)
+                
         except Exception as e:
-            logging.error(f"❌ LLM 전문 상담 처리 실패: {str(e)}")
-            import traceback
-            logging.error(f"상세 오류: {traceback.format_exc()}")
-            return self.conversation_algorithm.generate_no_answer_response(message)
+            logging.error(f"DB 검색 및 강화 중 오류: {str(e)}")
+            # 오류 발생 시 일반 대화로 폴백
+            return await self.get_conversation_response(message)
 
     async def format_and_send_response(self, response: str) -> str:
-        """응답 정보 보내기 - 응답 포맷팅"""
+        """응답 포맷팅 및 전송"""
         try:
             # 기본 포맷팅
-            formatted_response = self._format_db_answer(response)
-            return formatted_response
+            formatted_response = self._format_response(response)
+            
+            # 추가 포맷팅 서비스 사용
+            formatting_service = FormattingService()
+            final_response = formatting_service.format_response(formatted_response)
+            
+            return final_response
+            
         except Exception as e:
-            logging.error(f"Error formatting response: {str(e)}")
+            logging.error(f"응답 포맷팅 중 오류: {str(e)}")
             return response
 
-    # ===== 기존 메서드들 (리팩토링) =====
-
     async def _handle_casual_conversation(self, message: str) -> str:
-        """일상 대화 처리 - 업무별 메서드 호출"""
+        """일상 대화 처리"""
         return await self.get_conversation_response(message)
 
     async def _handle_professional_conversation(self, message: str) -> str:
-        """전문 상담 처리 - 업무별 메서드 호출"""
+        """전문 상담 처리"""
         return await self.search_and_enhance_answer(message)
 
     async def _enhance_db_answer_with_llm(self, message: str, db_answer: str) -> str:
-        """LLM으로 DB 답변을 개선합니다."""
+        """DB 답변을 LLM으로 강화"""
         try:
-            current_model = self.get_current_model()
-            if not current_model:
+            if self.use_llama_cpp:
+                # llama-cpp를 사용한 강화
+                prompt = self.llama_cpp_processor.create_professional_prompt(message, db_answer)
+                enhanced_answer = self.llama_cpp_processor.generate_response(prompt)
+            else:
+                # transformers를 사용한 강화
+                if not self.processor:
+                    raise RuntimeError("LLM processor not initialized")
+                
+                prompt = self.processor.create_professional_prompt(message, db_answer)
+                enhanced_answer = self.processor.generate_response(prompt)
+            
+            if enhanced_answer:
+                self.response_stats['llama_responses'] += 1
+                return enhanced_answer
+            else:
+                # LLM 강화 실패 시 DB 답변 그대로 반환
                 return self._format_db_answer(db_answer)
-            
-            # 모델별 프롬프트 생성
-            prompt = self.processor.create_professional_prompt(message, db_answer)
-            
-            model, tokenizer = current_model
-            
-            # 토크나이저 설정
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            
-            # 모델에 직접 입력
-            inputs = tokenizer(
-                prompt, 
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=512
-            )
-            
-            # 모델별 최적화된 파라미터 사용
-            params = self.processor.get_optimized_parameters()
-            params['max_new_tokens'] = 100  # 전문 상담은 더 긴 응답
-            
-            # 성능 모니터링 시작
-            generation_start = time.time()
-            prompt_length = inputs.input_ids.shape[1]
-            
-            # 생성
-            with torch.no_grad():
-                outputs = model.generate(
-                    inputs.input_ids,
-                    attention_mask=inputs.attention_mask,
-                    **params
-                )
-            
-            # 성능 모니터링 종료
-            generation_end = time.time()
-            response_length = outputs[0].shape[1] - prompt_length
-            
-            # 성능 메트릭 로깅
-            self.processor.log_performance_metrics(generation_start, generation_end, prompt_length, response_length)
-            
-            # 응답 후처리
-            response = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-            response = self.processor.process_response(response)
-            
-            # 응답이 너무 짧거나 의미없는 경우 기본 포맷팅 사용
-            if len(response) < 10 or response in ["", "네", "알겠습니다", "좋습니다"]:
-                return self._format_db_answer(db_answer)
-            
-            return response
-            
+                
         except Exception as e:
-            logging.error(f"Error enhancing DB answer with LLM: {str(e)}")
+            logging.error(f"DB 답변 LLM 강화 중 오류: {str(e)}")
+            # 오류 발생 시 DB 답변 그대로 반환
             return self._format_db_answer(db_answer)
 
     def _format_db_answer(self, db_answer: str) -> str:
-        """DB 답변을 포맷팅합니다."""
+        """DB 답변 포맷팅"""
         try:
             # 기본 정리
-            response = db_answer.strip()
+            formatted = db_answer.strip()
             
-            # 줄바꿈 개선
-            response = response.replace('\\n', '\n')
-            response = response.replace('  ', '\n')  # 두 개 이상의 공백을 줄바꿈으로
-            response = response.replace('* ', '\n• ')  # 불릿 포인트 개선
-            response = response.replace('1. ', '\n1. ')  # 번호 매기기 개선
-            response = response.replace('2. ', '\n2. ')
-            response = response.replace('3. ', '\n3. ')
-            response = response.replace('4. ', '\n4. ')
+            # 불필요한 문자 제거
+            formatted = re.sub(r'\s+', ' ', formatted)  # 연속된 공백을 하나로
             
-            # 응답 길이 제한 (문자 수 기준)
-            if len(response) > 300:  # 300자로 제한
-                response = response[:300] + "..."
+            # 길이 제한
+            if len(formatted) > 500:
+                formatted = formatted[:500] + "..."
             
-            # 불필요한 줄바꿈 정리
-            response = '\n'.join(line.strip() for line in response.split('\n') if line.strip())
-            
-            # 친절한 마무리 추가
-            response += "\n\n도움이 되셨나요? 다른 질문이 있으시면 언제든 말씀해 주세요."
-            
-            return response
+            return formatted
             
         except Exception as e:
-            logging.error(f"Error formatting DB answer: {str(e)}")
+            logging.error(f"DB 답변 포맷팅 중 오류: {str(e)}")
             return db_answer
 
     def _format_response(self, response: str) -> str:
-        """응답을 포맷팅합니다."""
-        return FormattingService.format_response(response)
+        """응답 포맷팅"""
+        if not response:
+            return "죄송합니다. 응답을 생성하지 못했습니다."
+        
+        # 기본 정리
+        response = response.strip()
+        
+        # 길이 제한
+        if len(response) > 300:
+            response = response[:300] + "..."
+        
+        return response
+
+    def _update_stats(self, processing_time: float, success: bool):
+        """통계 업데이트"""
+        self.response_stats['total_processing_time'] += processing_time
+        self.response_stats['processing_times'].append(processing_time)
+        
+        # 최소/최대 처리 시간 업데이트
+        if processing_time < self.response_stats['min_processing_time']:
+            self.response_stats['min_processing_time'] = processing_time
+        if processing_time > self.response_stats['max_processing_time']:
+            self.response_stats['max_processing_time'] = processing_time
+        
+        if not success:
+            self.response_stats['error_processing_time'] += processing_time
 
     def get_response_stats(self) -> Dict:
-        """응답 시간 통계를 반환합니다."""
+        """응답 통계 반환"""
         stats = self.response_stats.copy()
         
-        if stats['total_requests'] > 0:
-            stats['avg_processing_time'] = stats['total_processing_time'] / stats['total_requests']
-            if stats['db_responses'] > 0:
-                stats['avg_db_processing_time'] = stats['db_processing_time'] / stats['db_responses']
-            if stats['llama_responses'] > 0:
-                stats['avg_llama_processing_time'] = stats['llama_processing_time'] / stats['llama_responses']
-            else:
-                stats['avg_llama_processing_time'] = 0
-            
-            # 중간값 계산
-            if stats['processing_times']:
-                sorted_times = sorted(stats['processing_times'])
-                stats['median_processing_time'] = sorted_times[len(sorted_times) // 2]
+        # 평균 처리 시간 계산
+        if stats['processing_times']:
+            stats['avg_processing_time'] = sum(stats['processing_times']) / len(stats['processing_times'])
         else:
             stats['avg_processing_time'] = 0
-            stats['avg_db_processing_time'] = 0
-            stats['avg_llama_processing_time'] = 0
-            stats['median_processing_time'] = 0
+        
+        # 성공률 계산
+        if stats['total_requests'] > 0:
+            stats['success_rate'] = (stats['total_requests'] - stats['errors']) / stats['total_requests'] * 100
+        else:
+            stats['success_rate'] = 0
         
         return stats
 
     def log_response_stats(self):
-        """응답 시간 통계를 로그로 출력합니다."""
+        """응답 통계 로깅"""
         stats = self.get_response_stats()
         
-        logging.info("=" * 60)
-        logging.info("고객 응대 알고리즘 통계")
-        logging.info("=" * 60)
+        logging.info("=== LLM 서비스 응답 통계 ===")
         logging.info(f"총 요청 수: {stats['total_requests']}")
-        logging.info(f"일상 대화: {stats['casual_conversations']} ({stats['casual_conversations']/stats['total_requests']*100:.1f}%)")
-        logging.info(f"전문 상담: {stats['professional_conversations']} ({stats['professional_conversations']/stats['total_requests']*100:.1f}%)")
+        logging.info(f"일상 대화: {stats['casual_conversations']}")
+        logging.info(f"전문 상담: {stats['professional_conversations']}")
         logging.info(f"DB 응답: {stats['db_responses']}")
-        logging.info(f"LLaMA 응답: {stats['llama_responses']}")
+        logging.info(f"LLM 응답: {stats['llama_responses']}")
         logging.info(f"오류: {stats['errors']}")
-        logging.info("-" * 60)
+        logging.info(f"성공률: {stats['success_rate']:.1f}%")
         logging.info(f"평균 처리 시간: {stats['avg_processing_time']:.2f}ms")
-        logging.info(f"중간값 처리 시간: {stats['median_processing_time']:.2f}ms")
         logging.info(f"최소 처리 시간: {stats['min_processing_time']:.2f}ms")
         logging.info(f"최대 처리 시간: {stats['max_processing_time']:.2f}ms")
-        logging.info(f"평균 DB 처리 시간: {stats['avg_db_processing_time']:.2f}ms")
-        
-        # LLaMA 처리 시간 안전하게 출력
-        avg_llama_time = stats.get('avg_llama_processing_time', 0)
-        logging.info(f"평균 LLaMA 처리 시간: {avg_llama_time:.2f}ms")
-        logging.info("=" * 60)
+        logging.info(f"총 처리 시간: {stats['total_processing_time']:.2f}ms")
+        logging.info(f"DB 처리 시간: {stats['db_processing_time']:.2f}ms")
+        logging.info(f"LLM 처리 시간: {stats['llama_processing_time']:.2f}ms")
+        logging.info(f"오류 처리 시간: {stats['error_processing_time']:.2f}ms")
+        logging.info("================================")

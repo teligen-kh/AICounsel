@@ -9,37 +9,29 @@ from enum import Enum
 
 class ModelType(Enum):
     """사용 가능한 모델 타입"""
-    LLAMA_3_1_8B = "llama-3.1-8b"
-    POLYGLOT_KO_5_8B = "polyglot-ko-5.8b"
+    LLAMA_2_7B_CHAT = "llama-2-7b-chat"
 
 class ModelConfig:
     """모델별 설정"""
-    def __init__(self, name: str, path: str, max_tokens: int = 20, temperature: float = 0.3):
+    def __init__(self, name: str, path: str, max_tokens: int = 50, temperature: float = 0.6):
         self.name = name
         self.path = path
         self.max_tokens = max_tokens
         self.temperature = temperature
 
 class ModelManager:
-    """여러 LLM 모델을 관리하는 매니저"""
+    """LLaMA 2 7B Chat 모델을 관리하는 매니저"""
     
     def __init__(self):
         self.models: Dict[str, Tuple[AutoModelForCausalLM, AutoTokenizer]] = {}
         self.current_model: Optional[str] = None
         self.model_configs = {
-            ModelType.LLAMA_3_1_8B.value: ModelConfig(
-                "Llama-3.1-8B-Instruct",
+            ModelType.LLAMA_2_7B_CHAT.value: ModelConfig(
+                "Llama-2-7B-Chat",
                 os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
-                           "models", "Llama-3.1-8B-Instruct"),
-                max_tokens=20,
-                temperature=0.3
-            ),
-            ModelType.POLYGLOT_KO_5_8B.value: ModelConfig(
-                "Polyglot-Ko-5.8B",
-                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
-                           "models", "Polyglot-Ko-5.8B"),
-                max_tokens=30,  # 한국어 모델이므로 조금 더 긴 응답
-                temperature=0.4
+                           "models", "llama-2-7b-chat.Q4_K_M.gguf"),
+                max_tokens=50,
+                temperature=0.6
             )
         }
         
@@ -202,27 +194,27 @@ class ModelManager:
             return True
             
         except Exception as e:
-            logging.error(f"Failed to switch to model {model_type}: {str(e)}")
+            logging.error(f"Failed to switch model: {str(e)}")
             return False
     
     def get_current_model(self) -> Optional[Tuple[AutoModelForCausalLM, AutoTokenizer]]:
-        """현재 로딩된 모델을 반환합니다."""
+        """현재 로드된 모델을 반환합니다."""
         if self.current_model and self.current_model in self.models:
             return self.models[self.current_model]
         return None
     
     def get_current_model_config(self) -> Optional[ModelConfig]:
-        """현재 모델의 설정을 반환합니다."""
+        """현재 모델 설정을 반환합니다."""
         if self.current_model and self.current_model in self.model_configs:
             return self.model_configs[self.current_model]
         return None
     
     def is_model_loaded(self, model_type: str) -> bool:
-        """지정된 모델이 로딩되어 있는지 확인합니다."""
+        """모델이 로드되었는지 확인합니다."""
         return model_type in self.models
     
     def get_loaded_models(self) -> list:
-        """로딩된 모델 목록을 반환합니다."""
+        """로드된 모델 목록을 반환합니다."""
         return list(self.models.keys())
     
     def get_available_models(self) -> list:
@@ -236,17 +228,11 @@ class ModelManager:
         # 평균 응답 시간 계산
         if stats['response_times']:
             stats['avg_response_time'] = sum(stats['response_times']) / len(stats['response_times'])
-            stats['min_response_time'] = min(stats['response_times'])
-            stats['max_response_time'] = max(stats['response_times'])
-        else:
-            stats['avg_response_time'] = 0
-            stats['min_response_time'] = 0
-            stats['max_response_time'] = 0
         
         return stats
     
     def log_performance_summary(self):
-        """성능 요약을 로그로 출력합니다."""
+        """성능 요약을 로깅합니다."""
         stats = self.get_performance_stats()
         
         logging.info("=== 모델 매니저 성능 요약 ===")
@@ -254,19 +240,18 @@ class ModelManager:
         logging.info(f"성공 요청 수: {stats['successful_requests']}")
         logging.info(f"실패 요청 수: {stats['failed_requests']}")
         logging.info(f"평균 응답 시간: {stats['avg_response_time']:.2f}ms")
-        logging.info(f"최소 응답 시간: {stats['min_response_time']:.2f}ms")
-        logging.info(f"최대 응답 시간: {stats['max_response_time']:.2f}ms")
-        
-        if stats['model_load_times']:
-            logging.info("모델 로딩 시간:")
-            for model, load_time in stats['model_load_times'].items():
-                logging.info(f"  {model}: {load_time:.2f}ms")
-        
-        logging.info("=============================")
+        logging.info(f"최소 처리 시간: {stats.get('min_processing_time', 0):.2f}ms")
+        logging.info(f"최대 처리 시간: {stats.get('max_processing_time', 0):.2f}ms")
+        logging.info(f"로드된 모델: {self.get_loaded_models()}")
+        logging.info(f"현재 모델: {self.current_model}")
+        logging.info("================================")
 
 # 전역 모델 매니저 인스턴스
-model_manager = ModelManager()
+_model_manager: Optional[ModelManager] = None
 
 def get_model_manager() -> ModelManager:
     """전역 모델 매니저 인스턴스를 반환합니다."""
-    return model_manager 
+    global _model_manager
+    if _model_manager is None:
+        _model_manager = ModelManager()
+    return _model_manager 

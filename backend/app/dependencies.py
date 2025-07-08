@@ -20,24 +20,19 @@ _formatting_service: Optional[FormattingService] = None
 def _should_use_llama_cpp() -> bool:
     """llama-cpp 사용 여부를 결정합니다."""
     # 환경 변수로 제어 가능
-    use_llama_cpp = os.getenv("USE_LLAMA_CPP", "false").lower() == "true"
+    use_llama_cpp = os.getenv("USE_LLAMA_CPP", "true").lower() == "true"
     
     # GGUF 모델 파일 존재 여부 확인
     if use_llama_cpp:
         base_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "models")
-        gguf_files = [
-            os.path.join(base_path, "polyglot-ko-5.8b-Q4_K_M.gguf"),
-            os.path.join(base_path, "llama-3.1-8b-instruct-Q4_K_M.gguf"),
-            os.path.join(base_path, "llama-2-7b-chat.Q4_K_M.gguf")
-        ]
+        gguf_file = os.path.join(base_path, "llama-2-7b-chat.Q4_K_M.gguf")
         
-        for gguf_file in gguf_files:
-            if os.path.exists(gguf_file):
-                logging.info(f"GGUF 모델 발견: {gguf_file}")
-                return True
-        
-        logging.warning("llama-cpp 사용 설정되었지만 GGUF 모델 파일이 없습니다.")
-        return False
+        if os.path.exists(gguf_file):
+            logging.info(f"GGUF 모델 발견: {gguf_file}")
+            return True
+        else:
+            logging.warning(f"llama-cpp 사용 설정되었지만 GGUF 모델 파일이 없습니다: {gguf_file}")
+            return False
     
     return False
 

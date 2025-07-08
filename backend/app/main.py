@@ -35,18 +35,18 @@ async def lifespan(app: FastAPI):
         await connect_to_mongo()
         logger.info("데이터베이스 연결 완료")
         
-        # 모델 매니저 초기화
-        model_manager = get_model_manager()
-        default_model = ModelType.POLYGLOT_KO_5_8B.value
-        success = model_manager.load_model(default_model)
+        # LLM 서비스 초기화 (llama-cpp-python 사용)
+        from .dependencies import get_llm_service
+        llm_service = await get_llm_service()
+        logger.info("LLM 서비스 초기화 완료")
         
-        if success:
-            logger.info(f"기본 모델 로드 완료: {default_model}")
-        else:
-            logger.warning(f"기본 모델 로드 실패: {default_model}")
+        # 채팅 서비스 초기화
+        from .dependencies import get_chat_service
+        chat_service = await get_chat_service()
+        logger.info("채팅 서비스 초기화 완료")
         
-        # 서비스 초기화 (의존성 주입을 통해 자동으로 생성됨)
-        logger.info("서비스 초기화 완료")
+        # 서비스 초기화 완료
+        logger.info("모든 서비스 초기화 완료")
         
     except Exception as e:
         logger.error(f"애플리케이션 초기화 오류: {str(e)}")

@@ -22,10 +22,10 @@ def _should_use_llama_cpp() -> bool:
     # 환경 변수로 제어 가능
     use_llama_cpp = os.getenv("USE_LLAMA_CPP", "true").lower() == "true"
     
-    # GGUF 모델 파일 존재 여부 확인
+    # GGUF 모델 파일 존재 여부 확인 (Phi-3.5 모델)
     if use_llama_cpp:
         base_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "models")
-        gguf_file = os.path.join(base_path, "llama-2-7b-chat.Q4_K_M.gguf")
+        gguf_file = os.path.join(base_path, "Phi-3.5-mini-instruct-Q8_0.gguf")
         
         if os.path.exists(gguf_file):
             logging.info(f"GGUF 모델 발견: {gguf_file}")

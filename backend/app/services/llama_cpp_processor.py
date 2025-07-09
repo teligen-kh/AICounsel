@@ -6,14 +6,19 @@ import psutil
 import re
 from llama_cpp import Llama
 import os
+from .conversation_style_manager import get_style_manager, ConversationStyle
+from .input_filter import get_input_filter, InputType
 
 class LlamaCppProcessor:
     """llama-cpp-python을 사용하는 LLM 프로세서"""
     
-    def __init__(self, model_path: str, model_type: str = "polyglot-ko-5.8b"):
+    def __init__(self, model_path: str, model_type: str = "polyglot-ko-5.8b", style: ConversationStyle = ConversationStyle.FRIENDLY):
         self.model_type = model_type
         self.model_path = model_path
         self.llm = None
+        self.style_manager = get_style_manager()
+        self.input_filter = get_input_filter()
+        self.current_style = style
         self._initialize_model()
         
     def _initialize_model(self):
@@ -43,22 +48,51 @@ class LlamaCppProcessor:
     
     def create_casual_prompt(self, message: str) -> str:
         """일상 대화용 프롬프트 생성"""
-        # LLaMA 2 Chat 공식 형식
-        return f"<s>[INST] {message} [/INST]"
+        # 스타일 매니저에서 시스템 프롬프트 가져오기
+        system_prompt = self.style_manager.get_system_prompt(self.current_style)
+        
+        return f"<|system|>\n{system_prompt}<|end|>\n<|user|>\n{message}<|end|>\n<|assistant|>\n"
+    
+    def process_user_input(self, message: str) -> tuple[str, bool]:
+        """사용자 입력 처리 및 필터링"""
+        # 입력 분류
+        input_type, details = self.input_filter.classify_input(message)
+        
+        # 욕설이나 비상담 질문인 경우 템플릿 응답 반환
+        if input_type in [InputType.PROFANITY, InputType.NON_COUNSELING]:
+            template_response = self.input_filter.get_response_template(
+                input_type, 
+                self.style_manager.company_name
+            )
+            return template_response, True  # True = 템플릿 응답 사용
+        
+        # 일반적인 경우 LLM 처리
+        return "", False  # False = LLM 처리 필요
     
     def create_professional_prompt(self, message: str, db_answer: str) -> str:
         """전문 상담용 프롬프트 생성"""
-        return f"<s>[INST] {message}\n\n참고자료: {db_answer}\n\n위 참고자료를 바탕으로 답변해주세요. [/INST]"
+        # 스타일 매니저에서 시스템 프롬프트 가져오기
+        system_prompt = self.style_manager.get_system_prompt(self.current_style)
+        
+        # 전문 상담용 추가 지시사항
+        professional_instruction = "\n\n전문 상담 규칙:\n1. 제공된 참고자료의 정보만을 바탕으로 답변하세요.\n2. 참고자료에 없는 정보는 '해당 정보는 참고자료에 없습니다'라고 답변하세요."
+        
+        full_system_prompt = system_prompt + professional_instruction
+        
+        return f"<|system|>\n{full_system_prompt}<|end|>\n<|user|>\n{message}\n\n참고자료: {db_answer}\n\n위 참고자료를 바탕으로 정확한 답변을 제공해주세요.<|end|>\n<|assistant|>\n"
     
     def get_optimized_parameters(self) -> Dict[str, Any]:
-        """llama-cpp 최적화 파라미터"""
+        """llama-cpp 최적화 파라미터 (스타일별로 조정)"""
+        # 스타일 매니저에서 파라미터 가져오기
+        style_params = self.style_manager.get_parameters(self.current_style)
+        
         return {
-            "max_tokens": 100,        # 적당한 길이
-            "temperature": 0.6,       # 적당한 창의성
-            "top_p": 0.9,            # 기본값
-            "top_k": 50,             # 기본값
-            "repeat_penalty": 1.1,   # 반복 방지
-            "stop": ["[INST]", "</s>"]  # LLaMA 2 Chat 중단 토큰
+            "max_tokens": 100,       # 더 긴 응답 허용 (자연스러운 대화)
+            "temperature": 0.7,      # 창의성 증가 (더 자연스러운 대화)
+            "top_p": 0.9,            # 상위 90% 토큰 고려 (다양성 증가)
+            "top_k": 40,             # 상위 40개 토큰 (창의성 증가)
+            "repeat_penalty": 1.1,   # 반복 최소화 (자연스러움)
+            "stop": ["<|user|>", "<|end|>", "<|system|>"]  # Phi-3.5 중단 토큰
         }
     
     def generate_response(self, prompt: str) -> str:

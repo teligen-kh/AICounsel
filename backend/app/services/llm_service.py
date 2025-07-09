@@ -41,7 +41,7 @@ class LLMService:
         """
         self.db = db
         self.use_db_priority = use_db_priority
-        self.model_type = "llama-2-7b-chat"  # 기본 모델
+        self.model_type = "phi-3.5-mini-instruct"  # 기본 모델
         self.use_llama_cpp = use_llama_cpp
         
         # llama-cpp 사용 여부에 따른 초기화
@@ -94,8 +94,9 @@ class LLMService:
             # GGUF 모델 경로 설정
             model_path = self._get_gguf_model_path()
             
-            # llama-cpp 프로세서 초기화
-            self.llama_cpp_processor = LlamaCppProcessor(model_path, self.model_type)
+            # llama-cpp 프로세서 초기화 (기본 스타일: 친근한 상담사)
+            from .conversation_style_manager import ConversationStyle
+            self.llama_cpp_processor = LlamaCppProcessor(model_path, self.model_type, ConversationStyle.FRIENDLY)
             logging.info(f"llama-cpp LLM 프로세서 초기화 완료: {self.model_type}")
             
         except Exception as e:
@@ -106,9 +107,9 @@ class LLMService:
             self._initialize_transformers()
 
     def _get_gguf_model_path(self) -> str:
-        """GGUF 모델 경로 반환"""
+        """GGUF 모델 경로 반환 (Phi-3.5만 체크)"""
         base_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "models")
-        model_path = os.path.join(base_path, "llama-2-7b-chat-Q4_K_M.gguf")
+        model_path = os.path.join(base_path, "Phi-3.5-mini-instruct-Q8_0.gguf")
         
         if os.path.exists(model_path):
             return model_path
@@ -173,6 +174,26 @@ class LLMService:
         else:
             self.search_service = None
         logging.info(f"DB priority mode: {'enabled' if enabled else 'disabled'}")
+    
+    def set_conversation_style(self, style: str):
+        """대화 스타일을 설정합니다."""
+        try:
+            from .conversation_style_manager import ConversationStyle
+            style_enum = ConversationStyle(style)
+            
+            if self.use_llama_cpp and self.llama_cpp_processor:
+                # 새로운 스타일로 프로세서 재초기화
+                model_path = self._get_gguf_model_path()
+                self.llama_cpp_processor.cleanup()
+                self.llama_cpp_processor = LlamaCppProcessor(model_path, self.model_type, style_enum)
+                logging.info(f"대화 스타일 변경됨: {style}")
+            else:
+                logging.warning("llama-cpp가 활성화되지 않아 스타일 변경이 불가능합니다.")
+                
+        except ValueError:
+            logging.error(f"지원하지 않는 스타일: {style}")
+        except Exception as e:
+            logging.error(f"스타일 변경 중 오류: {str(e)}")
 
     async def process_message(self, message: str, conversation_id: str = None) -> str:
         """
@@ -248,10 +269,16 @@ class LLMService:
     async def _handle_llama_cpp_casual(self, message: str) -> str:
         """llama-cpp를 사용한 일상 대화 처리"""
         try:
-            # 프롬프트 생성
-            prompt = self.llama_cpp_processor.create_casual_prompt(message)
+            # 입력 필터 처리 (욕설, 비상담 질문 체크)
+            template_response, use_template = self.llama_cpp_processor.process_user_input(message)
             
-            # 응답 생성
+            if use_template:
+                # 템플릿 응답 사용 (욕설, 비상담 질문)
+                self.response_stats['llama_responses'] += 1
+                return template_response
+            
+            # 일반적인 경우 LLM 처리
+            prompt = self.llama_cpp_processor.create_casual_prompt(message)
             response = self.llama_cpp_processor.generate_response(prompt)
             
             if response:

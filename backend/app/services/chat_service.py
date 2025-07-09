@@ -4,6 +4,7 @@ from .db_enhancement_service import DBEnhancementService
 from .conversation_algorithm import ConversationAlgorithm
 from .formatting_service import FormattingService
 from .model_manager import get_model_manager, ModelType
+from .input_filter import get_input_filter, InputType
 import logging
 import time
 from datetime import datetime
@@ -39,6 +40,9 @@ class ChatService:
         
         # 고객 응대 알고리즘
         self.conversation_algorithm = ConversationAlgorithm()
+        
+        # 입력 필터
+        self.input_filter = get_input_filter()
         
         # 응답 시간 통계
         self.response_stats = {
@@ -161,17 +165,40 @@ class ChatService:
         try:
             logging.info(f"메시지 처리 시작: {message[:50]}...")
             
-            # 1. 대화 유형 분류
+            # 1. 입력 필터 처리 (욕설, 비상담 질문 체크)
+            input_type, details = self.input_filter.classify_input(message)
+            logging.info(f"입력 분류: {input_type.value} - {details['reason']}")
+            
+            # 욕설이나 비상담 질문인 경우 템플릿 응답 반환
+            if input_type in [InputType.PROFANITY, InputType.NON_COUNSELING]:
+                template_response = self.input_filter.get_response_template(
+                    input_type, 
+                    "텔리젠"
+                )
+                logging.info(f"템플릿 응답 사용: {template_response}")
+                
+                # 처리 시간 계산
+                processing_time = (time.time() - start_time) * 1000
+                self.response_stats['total_processing_time'] += processing_time
+                self.response_stats['processing_times'].append(processing_time)
+                
+                logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 상담사 응답 완료")
+                logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 처리 시간: {processing_time:.2f}ms")
+                logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 응답 내용: {template_response[:100]}...")
+                
+                return template_response
+            
+            # 2. 대화 유형 분류 (일반적인 경우)
             conversation_type = self.conversation_algorithm.classify_conversation_type(message)
             logging.info(f"대화 유형: {conversation_type}")
             
-            # 2. 업무별 메서드 호출
+            # 3. 업무별 메서드 호출
             if conversation_type == "casual":
                 response = await self.get_conversation_response(message)
             else:
                 response = await self.search_and_enhance_answer(message)
             
-            # 3. 응답 포맷팅
+            # 4. 응답 포맷팅
             formatted_response = await self.format_and_send_response(response)
             
             # 처리 시간 계산

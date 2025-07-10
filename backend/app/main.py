@@ -6,6 +6,7 @@ from .dependencies import get_chat_service_dependency, get_llm_service_dependenc
 from .services.chat_service import ChatService
 from .services.llm_service import LLMService
 from .routers import chat
+from .api.v1 import auth
 from .services.model_manager import get_model_manager, ModelType
 import logging
 import uvicorn
@@ -86,6 +87,7 @@ app.add_middleware(
 
 # 라우터 등록
 app.include_router(chat.router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():

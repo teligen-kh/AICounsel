@@ -122,7 +122,7 @@ class AuthService:
         
         return hmac.compare_digest(signature, expected_signature)
     
-    def auto_login(self, customer_id: str, user_id: str, user_name: str, 
+    async def auto_login(self, customer_id: str, user_id: str, user_name: str, 
                    store_id: Optional[str] = None, timestamp: int = None, 
                    signature: str = None, program_version: str = None) -> Dict[str, Any]:
         """자동 로그인"""
@@ -137,7 +137,7 @@ class AuthService:
                 raise ValueError("Timestamp expired")
             
             # 사용자 조회 또는 생성
-            user = self.users_collection.find_one({
+            user = await self.users_collection.find_one({
                 "company": customer_id,
                 "username": user_id
             })
@@ -152,10 +152,10 @@ class AuthService:
                     login_type=LoginType.AUTO,
                     permissions=[Permission.CHAT_ACCESS, Permission.CHAT_HISTORY]
                 )
-                self.users_collection.insert_one(user.dict())
+                await self.users_collection.insert_one(user.dict())
             else:
                 # 로그인 시간 업데이트
-                self.users_collection.update_one(
+                await self.users_collection.update_one(
                     {"_id": user["_id"]},
                     {"$set": {"last_login_at": datetime.now()}}
                 )
@@ -172,7 +172,7 @@ class AuthService:
                 "created_at": datetime.now(),
                 "expires_at": datetime.now() + timedelta(hours=1)
             }
-            self.sessions_collection.insert_one(session_data)
+            await self.sessions_collection.insert_one(session_data)
             
             return {
                 "success": True,
@@ -194,6 +194,129 @@ class AuthService:
                 "error": str(e)
             }
     
+    async def email_login(self, email: str, password: str) -> Dict[str, Any]:
+        """이메일/비밀번호 로그인"""
+        try:
+            # 사용자 조회 (이메일로)
+            user = await self.users_collection.find_one({"email": email})
+            
+            if not user:
+                return {
+                    "success": False,
+                    "error": "이메일 또는 비밀번호가 올바르지 않습니다."
+                }
+            
+            # 비밀번호 검증
+            if not self._verify_password(password, user["password_hash"]):
+                return {
+                    "success": False,
+                    "error": "이메일 또는 비밀번호가 올바르지 않습니다."
+                }
+            
+            # 계정 활성화 확인
+            if not user.get("is_active", True):
+                return {
+                    "success": False,
+                    "error": "비활성화된 계정입니다."
+                }
+            
+            # 로그인 시간 업데이트
+            await self.users_collection.update_one(
+                {"_id": user["_id"]},
+                {"$set": {"last_login_at": datetime.now()}}
+            )
+            
+            # 액세스 토큰 생성
+            access_token = self._create_access_token(
+                data={"sub": user["id"], "role": user["role"], "company": user["company"]}
+            )
+            
+            # 세션 저장
+            session_data = {
+                "user_id": user["id"],
+                "access_token": access_token,
+                "created_at": datetime.now(),
+                "expires_at": datetime.now() + timedelta(hours=1)
+            }
+            await self.sessions_collection.insert_one(session_data)
+            
+            return {
+                "success": True,
+                "access_token": access_token,
+                "user_info": {
+                    "id": user["id"],
+                    "username": user["username"],
+                    "email": user["email"],
+                    "role": user["role"],
+                    "company": user["company"],
+                    "permissions": user["permissions"]
+                },
+                "expires_in": 3600
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def register_user(self, username: str, email: str, password: str) -> Dict[str, Any]:
+        """사용자 회원가입"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"register_user 호출: username={username}, email={email}")
+        
+        try:
+            # 이메일 중복 확인
+            existing_user = await self.users_collection.find_one({"email": email})
+            logger.info(f"이메일 중복 확인 결과: {existing_user is not None}")
+            
+            if existing_user:
+                logger.warning(f"이메일 중복: {email}")
+                return {
+                    "success": False,
+                    "error": "이미 사용 중인 이메일입니다."
+                }
+            
+            # 사용자명 중복 확인
+            existing_username = await self.users_collection.find_one({"username": username})
+            logger.info(f"사용자명 중복 확인 결과: {existing_username is not None}")
+            
+            if existing_username:
+                logger.warning(f"사용자명 중복: {username}")
+                return {
+                    "success": False,
+                    "error": "이미 사용 중인 사용자명입니다."
+                }
+            
+            # 새 사용자 생성
+            user = User(
+                username=username,
+                email=email,
+                password_hash=self._hash_password(password),
+                role=UserRole.CUSTOMER,
+                company="telizen",
+                permissions=[Permission.CHAT_ACCESS, Permission.CHAT_HISTORY]
+            )
+            
+            logger.info(f"새 사용자 객체 생성: {user.dict()}")
+            
+            # DB에 저장
+            result = await self.users_collection.insert_one(user.dict())
+            logger.info(f"DB 저장 결과: {result.inserted_id}")
+            
+            # 자동 로그인
+            login_result = await self.email_login(email, password)
+            logger.info(f"자동 로그인 결과: {login_result}")
+            return login_result
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     def manual_login(self, username: str, password: str, customer_id: Optional[str] = None) -> Dict[str, Any]:
         """수동 로그인"""
         try:

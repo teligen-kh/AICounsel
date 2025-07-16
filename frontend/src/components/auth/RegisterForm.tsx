@@ -19,6 +19,10 @@ export function RegisterForm() {
     confirmPassword: '',
   });
   const [validationError, setValidationError] = useState('');
+  const [emailStatus, setEmailStatus] = useState<{ available: boolean; message: string } | null>(null);
+  const [usernameStatus, setUsernameStatus] = useState<{ available: boolean; message: string } | null>(null);
+  const [isCheckingEmail, setIsCheckingEmail] = useState(false);
+  const [isCheckingUsername, setIsCheckingUsername] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,11 +43,55 @@ export function RegisterForm() {
     await register(formData);
   };
 
+  const checkEmailAvailability = async (email: string) => {
+    if (!email || email.length < 3) {
+      setEmailStatus(null);
+      return;
+    }
+    
+    setIsCheckingEmail(true);
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/auth/check-email?email=${encodeURIComponent(email)}`);
+      const data = await response.json();
+      setEmailStatus(data);
+    } catch (error) {
+      console.error('이메일 확인 오류:', error);
+    } finally {
+      setIsCheckingEmail(false);
+    }
+  };
+
+  const checkUsernameAvailability = async (username: string) => {
+    if (!username || username.length < 2) {
+      setUsernameStatus(null);
+      return;
+    }
+    
+    setIsCheckingUsername(true);
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/auth/check-username?username=${encodeURIComponent(username)}`);
+      const data = await response.json();
+      setUsernameStatus(data);
+    } catch (error) {
+      console.error('사용자명 확인 오류:', error);
+    } finally {
+      setIsCheckingUsername(false);
+    }
+  };
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value,
+      [name]: value,
     });
+
+    // 실시간 중복 확인
+    if (name === 'email') {
+      setTimeout(() => checkEmailAvailability(value), 500);
+    } else if (name === 'username') {
+      setTimeout(() => checkUsernameAvailability(value), 500);
+    }
   };
 
   return (
@@ -76,6 +124,14 @@ export function RegisterForm() {
               required
               disabled={isLoading}
             />
+            {isCheckingUsername && (
+              <p className="text-sm text-blue-600">확인 중...</p>
+            )}
+            {usernameStatus && (
+              <p className={`text-sm ${usernameStatus.available ? 'text-green-600' : 'text-red-600'}`}>
+                {usernameStatus.message}
+              </p>
+            )}
           </div>
           
           <div className="space-y-2">
@@ -92,6 +148,14 @@ export function RegisterForm() {
               required
               disabled={isLoading}
             />
+            {isCheckingEmail && (
+              <p className="text-sm text-blue-600">확인 중...</p>
+            )}
+            {emailStatus && (
+              <p className={`text-sm ${emailStatus.available ? 'text-green-600' : 'text-red-600'}`}>
+                {emailStatus.message}
+              </p>
+            )}
           </div>
           
           <div className="space-y-2">
@@ -161,7 +225,13 @@ export function RegisterForm() {
           <Button
             type="submit"
             className="w-full"
-            disabled={isLoading}
+            disabled={
+              isLoading || 
+              !emailStatus?.available || 
+              !usernameStatus?.available ||
+              isCheckingEmail ||
+              isCheckingUsername
+            }
           >
             {isLoading ? (
               <>

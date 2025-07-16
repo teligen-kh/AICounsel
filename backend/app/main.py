@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from .database import get_database
+from .database import get_database, connect_to_mongo, close_mongo_connection
 from .dependencies import get_chat_service_dependency, get_llm_service_dependency
 from .services.chat_service import ChatService
 from .services.llm_service import LLMService
@@ -32,7 +32,6 @@ async def lifespan(app: FastAPI):
     
     try:
         # 데이터베이스 연결 초기화
-        from .database import connect_to_mongo
         await connect_to_mongo()
         logger.info("데이터베이스 연결 완료")
         
@@ -62,7 +61,6 @@ async def lifespan(app: FastAPI):
         reset_services()
         
         # 데이터베이스 연결 종료
-        from .database import close_mongo_connection
         await close_mongo_connection()
         logger.info("서비스 정리 완료")
     except Exception as e:

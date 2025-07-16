@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 from ...services.auth_service import AuthService
-from ...core.database import get_database
+from ...database import get_database
 from ...models.user import UserRole, Permission
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -21,17 +21,14 @@ class AutoLoginRequest(BaseModel):
     signature: str
     program_version: Optional[str] = None
 
-class ManualLoginRequest(BaseModel):
-    username: str
+class LoginRequest(BaseModel):
+    email: str
     password: str
-    customer_id: Optional[str] = None
 
 class RegisterRequest(BaseModel):
     username: str
-    email: Optional[str] = None
+    email: str
     password: str
-    role: UserRole = UserRole.CUSTOMER
-    company: str = "telizen"
 
 # 응답 모델
 class LoginResponse(BaseModel):
@@ -53,8 +50,8 @@ class UserInfoResponse(BaseModel):
     last_login_at: Optional[datetime] = None
 
 # 의존성
-def get_auth_service():
-    db = get_database()
+async def get_auth_service():
+    db = await get_database()
     return AuthService(db)
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), 
@@ -77,7 +74,7 @@ async def auto_login(
     auth_service: AuthService = Depends(get_auth_service)
 ):
     """자동 로그인 API"""
-    result = auth_service.auto_login(
+    result = await auth_service.auto_login(
         customer_id=request.customer_id,
         user_id=request.user_id,
         user_name=request.user_name,
@@ -96,15 +93,14 @@ async def auto_login(
     return result
 
 @router.post("/login", response_model=LoginResponse)
-async def manual_login(
-    request: ManualLoginRequest,
+async def login(
+    request: LoginRequest,
     auth_service: AuthService = Depends(get_auth_service)
 ):
-    """수동 로그인 API"""
-    result = auth_service.manual_login(
-        username=request.username,
-        password=request.password,
-        customer_id=request.customer_id
+    """이메일/비밀번호 로그인 API"""
+    result = await auth_service.email_login(
+        email=request.email,
+        password=request.password
     )
     
     if not result["success"]:
@@ -121,37 +117,31 @@ async def register(
     auth_service: AuthService = Depends(get_auth_service)
 ):
     """회원가입 API"""
-    # 간단한 회원가입 구현 (실제로는 더 복잡한 검증 필요)
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"회원가입 요청: username={request.username}, email={request.email}")
+    
     try:
-        # 사용자 생성
-        from ...models.user import User, AdminLevel
-        from datetime import datetime
-        
-        user = User(
+        result = await auth_service.register_user(
             username=request.username,
             email=request.email,
-            password_hash=auth_service._hash_password(request.password),
-            role=request.role,
-            company=request.company,
-            permissions=[Permission.CHAT_ACCESS, Permission.CHAT_HISTORY]
+            password=request.password
         )
         
-        # DB에 저장
-        auth_service.users_collection.insert_one(user.dict())
+        logger.info(f"회원가입 결과: {result}")
         
-        # 자동 로그인
-        result = auth_service.manual_login(
-            username=request.username,
-            password=request.password,
-            customer_id=request.company
-        )
+        if not result["success"]:
+            logger.error(f"회원가입 실패: {result['error']}")
+            return result
         
         return result
         
     except Exception as e:
+        logger.error(f"회원가입 중 예외 발생: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Registration failed: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"회원가입 중 오류가 발생했습니다: {str(e)}"
         )
 
 @router.get("/me", response_model=UserInfoResponse)
@@ -250,6 +240,42 @@ async def get_users(
     
     users = list(auth_service.users_collection.find({}, {"password_hash": 0}))
     return {"users": users}
+
+@router.get("/check-email")
+async def check_email_availability(
+    email: str,
+    auth_service: AuthService = Depends(get_auth_service)
+):
+    """이메일 중복 확인"""
+    existing_user = await auth_service.users_collection.find_one({"email": email})
+    return {
+        "available": existing_user is None,
+        "message": "이미 사용 중인 이메일입니다." if existing_user else "사용 가능한 이메일입니다."
+    }
+
+@router.get("/check-username")
+async def check_username_availability(
+    username: str,
+    auth_service: AuthService = Depends(get_auth_service)
+):
+    """사용자명 중복 확인"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"사용자명 중복 확인 요청: {username}")
+    
+    existing_user = await auth_service.users_collection.find_one({"username": username})
+    logger.info(f"데이터베이스 조회 결과: {existing_user}")
+    
+    is_available = existing_user is None
+    message = "이미 사용 중인 사용자명입니다." if existing_user else "사용 가능한 사용자명입니다."
+    
+    logger.info(f"결과: available={is_available}, message={message}")
+    
+    return {
+        "available": is_available,
+        "message": message
+    }
 
 @router.get("/admin/roles")
 async def get_admin_roles(

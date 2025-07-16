@@ -43,8 +43,15 @@ class DataProcessor:
     def convert_faq_to_finetune_format(self, df: pd.DataFrame) -> List[Dict]:
         """FAQ 데이터를 파인튜닝 형식으로 변환"""
         finetune_data = []
+        total_rows = len(df)
         
-        for _, row in df.iterrows():
+        logger.info(f"FAQ 데이터 변환 시작: 총 {total_rows}개 행 처리")
+        
+        for idx, row in df.iterrows():
+            # 진행 상황 로그 (10개마다)
+            if (idx + 1) % 10 == 0:
+                logger.info(f"변환 진행률: {idx + 1}/{total_rows} ({((idx + 1)/total_rows)*100:.1f}%)")
+            
             # FAQ 데이터 형식: 요청내용, 처리내용 표준화
             if len(row) >= 2:
                 request = str(row.iloc[0]).strip()
@@ -59,8 +66,12 @@ class DataProcessor:
                         "input": request,
                         "output": response
                     })
+                else:
+                    logger.warning(f"행 {idx + 1}: 빈 값 또는 NaN 값 발견 - 건너뜀")
+            else:
+                logger.warning(f"행 {idx + 1}: 필드 개수 부족 (필요: 2, 실제: {len(row)}) - 건너뜀")
         
-        logger.info(f"FAQ 데이터 변환 완료: {len(finetune_data)}개 항목")
+        logger.info(f"FAQ 데이터 변환 완료: {len(finetune_data)}개 항목 (성공률: {len(finetune_data)/total_rows*100:.1f}%)")
         return finetune_data
     
     def convert_conversation_to_finetune_format(self, conversations: List[Dict]) -> List[Dict]:

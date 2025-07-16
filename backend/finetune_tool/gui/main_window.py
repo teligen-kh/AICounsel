@@ -159,7 +159,7 @@ class FinetuneGUI:
         self.model_type_var = tk.StringVar(value=self.config.finetune.model_type)
         model_type_combo = ctk.CTkComboBox(
             type_frame, 
-            values=["phi", "llama", "mistral"],
+            values=["phi", "llama", "mistral", "gpt2", "bloom"],
             variable=self.model_type_var,
             command=self.on_model_type_change
         )
@@ -364,32 +364,77 @@ class FinetuneGUI:
     def process_data(self):
         """데이터 전처리 실행"""
         try:
+            # 진행 상황 초기화
+            self.stats_text.delete("1.0", tk.END)
+            self.stats_text.insert("1.0", "데이터 전처리를 시작합니다...\n\n")
+            self.stats_text.see(tk.END)
+            self.root.update()
+            
             # 설정 업데이트
             self.update_config_from_gui()
             
             # 데이터 프로세서 생성
+            self.stats_text.insert(tk.END, "✓ 데이터 프로세서 초기화 완료\n")
+            self.stats_text.see(tk.END)
+            self.root.update()
+            
             self.data_processor = DataProcessor(self.config)
             
-            # 데이터 처리
+            # FAQ 데이터 로드
+            self.stats_text.insert(tk.END, "📁 FAQ CSV 파일 로드 중...\n")
+            self.stats_text.see(tk.END)
+            self.root.update()
+            
+            faq_df = self.data_processor.load_faq_data(self.config.data.faq_data_path)
+            self.stats_text.insert(tk.END, f"✓ FAQ 데이터 로드 완료: {len(faq_df)}개 행\n")
+            self.stats_text.see(tk.END)
+            self.root.update()
+            
+            # FAQ 데이터 변환
+            self.stats_text.insert(tk.END, "🔄 FAQ 데이터 변환 중...\n")
+            self.stats_text.see(tk.END)
+            self.root.update()
+            
+            faq_data = self.data_processor.convert_faq_to_finetune_format(faq_df)
+            self.stats_text.insert(tk.END, f"✓ FAQ 데이터 변환 완료: {len(faq_data)}개 항목\n")
+            self.stats_text.see(tk.END)
+            self.root.update()
+            
+            # 전체 데이터 처리
+            self.stats_text.insert(tk.END, "🔧 전체 데이터 처리 중...\n")
+            self.stats_text.see(tk.END)
+            self.root.update()
+            
             train_dataset, val_dataset, test_dataset = self.data_processor.process_all_data()
             
-            # 통계 정보 표시
-            stats = self.data_processor.get_data_stats(
-                self.data_processor.load_faq_data(self.config.data.faq_data_path).to_dict('records')
-            )
+            # 통계 정보 계산
+            self.stats_text.insert(tk.END, "📊 통계 정보 계산 중...\n")
+            self.stats_text.see(tk.END)
+            self.root.update()
+            
+            stats = self.data_processor.get_data_stats(faq_data)
             
             stats_text = f"""
-데이터 처리 완료!
+✅ 데이터 처리 완료!
 
-총 샘플 수: {stats.get('total_samples', 0)}
-평균 입력 길이: {stats.get('avg_input_length', 0):.1f}
-평균 출력 길이: {stats.get('avg_output_length', 0):.1f}
-최대 입력 길이: {stats.get('max_input_length', 0)}
-최대 출력 길이: {stats.get('max_output_length', 0)}
+📈 데이터 통계:
+• 총 샘플 수: {stats.get('total_samples', 0)}개
+• 평균 입력 길이: {stats.get('avg_input_length', 0):.1f}자
+• 평균 출력 길이: {stats.get('avg_output_length', 0):.1f}자
+• 최대 입력 길이: {stats.get('max_input_length', 0)}자
+• 최대 출력 길이: {stats.get('max_output_length', 0)}자
+• 최소 입력 길이: {stats.get('min_input_length', 0)}자
+• 최소 출력 길이: {stats.get('min_output_length', 0)}자
 
-훈련 데이터: {len(train_dataset)}개
-검증 데이터: {len(val_dataset)}개
-테스트 데이터: {len(test_dataset)}개
+📂 데이터 분할:
+• 훈련 데이터: {len(train_dataset)}개
+• 검증 데이터: {len(val_dataset)}개
+• 테스트 데이터: {len(test_dataset)}개
+
+🎯 데이터 품질:
+• 입력 텍스트: {stats.get('total_samples', 0)}개 모두 유효
+• 출력 텍스트: {stats.get('total_samples', 0)}개 모두 유효
+• 파인튜닝 준비 완료! 🚀
             """
             
             self.stats_text.delete("1.0", tk.END)
@@ -398,7 +443,9 @@ class FinetuneGUI:
             messagebox.showinfo("완료", "데이터 전처리가 완료되었습니다!")
             
         except Exception as e:
-            messagebox.showerror("오류", f"데이터 처리 중 오류가 발생했습니다:\n{str(e)}")
+            error_msg = f"❌ 데이터 처리 중 오류가 발생했습니다:\n{str(e)}"
+            self.stats_text.insert(tk.END, f"\n{error_msg}\n")
+            messagebox.showerror("오류", error_msg)
             
     def update_config_from_gui(self):
         """GUI에서 설정 업데이트"""

@@ -12,8 +12,9 @@ class FinetuneConfig:
     """파인튜닝 기본 설정"""
     
     # 모델 설정
-    model_name: str = "microsoft/Phi-3.5-mini"
+    model_name: str = "D:/AICounsel/backend/finetune_tool/models/microsoft/Phi-3.5-mini-instruct"
     model_type: str = "phi"  # phi, llama, mistral 등
+    use_gguf: bool = False  # GGUF 모델 사용 여부
     
     # LoRA 설정
     lora_r: int = 16
@@ -24,13 +25,16 @@ class FinetuneConfig:
     # 학습 설정
     num_epochs: int = 3
     learning_rate: float = 2e-4
-    batch_size: int = 4
-    gradient_accumulation_steps: int = 4
+    batch_size: int = 1  # GTX 1050 Ti용
+    gradient_accumulation_steps: int = 16  # GTX 1050 Ti용
     max_seq_length: int = 512
     
     # 양자화 설정 (GTX 1050 Ti용)
     use_4bit: bool = True
     use_8bit: bool = False
+    
+    # 모니터링 설정
+    use_wandb: bool = False  # Weights & Biases 사용 여부
     
     # 출력 설정
     output_dir: str = "./finetuned_models"
@@ -40,7 +44,7 @@ class FinetuneConfig:
     
     def __post_init__(self):
         if self.target_modules is None:
-            self.target_modules = ["q_proj", "v_proj"]
+            self.target_modules = ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 @dataclass
 class CloudConfig:
@@ -101,9 +105,10 @@ class ConfigManager:
         
         configs = {
             "phi": {
-                "model_name": "microsoft/Phi-3.5-mini",
-                "target_modules": ["q_proj", "v_proj", "k_proj", "o_proj"],
-                "max_seq_length": 512
+                "model_name": "D:/AICounsel/backend/finetune_tool/models/microsoft/Phi-3.5-mini-instruct",
+                "target_modules": ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+                "max_seq_length": 512,
+                "use_gguf": False
             },
             "llama": {
                 "model_name": "meta-llama/Llama-2-7b-chat-hf",
@@ -114,10 +119,20 @@ class ConfigManager:
                 "model_name": "mistralai/Mistral-7B-Instruct-v0.2",
                 "target_modules": ["q_proj", "v_proj", "k_proj", "o_proj"],
                 "max_seq_length": 1024
+            },
+            "gpt2": {
+                "model_name": "gpt2",
+                "target_modules": ["c_attn", "c_proj"],
+                "max_seq_length": 512
+            },
+            "bloom": {
+                "model_name": "bigscience/bloom-560m",
+                "target_modules": ["query_key_value", "dense"],
+                "max_seq_length": 512
             }
         }
         
-        return configs.get(model_type, configs["phi"])
+        return configs.get(model_type, configs["gpt2"])
     
     def get_hardware_config(self, gpu_memory: int) -> Dict[str, Any]:
         """하드웨어별 설정 반환"""

@@ -38,6 +38,50 @@ class ModelTrainer:
         
         logger.info(f"모델 로드 중: {self.config.finetune.model_name}")
         
+        # GGUF 모델인지 확인
+        if hasattr(self.config.finetune, 'use_gguf') and self.config.finetune.use_gguf:
+            logger.info("GGUF 모델 로드 중...")
+            self._load_gguf_model()
+        else:
+            logger.info("Hugging Face 모델 로드 중...")
+            self._load_hf_model()
+        
+        logger.info("모델과 토크나이저 로드 완료")
+    
+    def _load_gguf_model(self):
+        """GGUF 모델 로드"""
+        try:
+            from llama_cpp import Llama
+            
+            # GGUF 모델 로드
+            self.gguf_model = Llama(
+                model_path=self.config.finetune.model_name,
+                n_ctx=2048,
+                n_threads=4,
+                n_gpu_layers=1
+            )
+            
+            # 토크나이저는 Phi-3.5용으로 설정
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                "microsoft/Phi-3.5-mini",
+                trust_remote_code=True
+            )
+            
+            # 패딩 토큰 설정
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+                
+            logger.info("GGUF 모델 로드 완료")
+            
+        except ImportError:
+            logger.error("llama-cpp-python이 설치되지 않았습니다. pip install llama-cpp-python으로 설치하세요.")
+            raise
+        except Exception as e:
+            logger.error(f"GGUF 모델 로드 실패: {e}")
+            raise
+    
+    def _load_hf_model(self):
+        """Hugging Face 모델 로드"""
         # 양자화 설정 (GTX 1050 Ti용)
         quantization_config = None
         if self.config.finetune.use_4bit:
@@ -72,8 +116,6 @@ class ModelTrainer:
         # 패딩 토큰 설정
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        
-        logger.info("모델과 토크나이저 로드 완료")
     
     def setup_lora(self):
         """LoRA 설정"""
@@ -137,7 +179,7 @@ class ModelTrainer:
             warmup_steps=100,
             logging_steps=self.config.finetune.logging_steps,
             save_steps=self.config.finetune.save_steps,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             eval_steps=self.config.finetune.eval_steps,
             save_total_limit=3,
             load_best_model_at_end=True,

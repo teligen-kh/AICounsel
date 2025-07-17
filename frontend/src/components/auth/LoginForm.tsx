@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,15 +10,47 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 
 export function LoginForm() {
-  const { login, isLoading, error } = useAuth();
+  const { login, isLoading, error, isAuthenticated } = useAuth();
+  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
   });
+  const [autoLogin, setAutoLogin] = useState(false);
+
+  useEffect(() => {
+    // 자동 로그인 여부를 localStorage에서 불러오기
+    const savedAutoLogin = localStorage.getItem('autoLogin');
+    if (savedAutoLogin === 'true') {
+      setAutoLogin(true);
+      
+      // 저장된 로그인 정보 불러오기
+      const savedEmail = localStorage.getItem('savedEmail');
+      const savedPassword = localStorage.getItem('savedPassword');
+      
+      if (savedEmail && savedPassword) {
+        setFormData({
+          email: savedEmail,
+          password: savedPassword,
+        });
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.push('/');
+    }
+  }, [isAuthenticated, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (autoLogin) {
+      localStorage.setItem('autoLogin', 'true');
+    } else {
+      localStorage.removeItem('autoLogin');
+    }
     await login(formData);
   };
 
@@ -90,6 +123,21 @@ export function LoginForm() {
                 )}
               </Button>
             </div>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <input
+              id="autoLogin"
+              name="autoLogin"
+              type="checkbox"
+              checked={autoLogin}
+              onChange={() => setAutoLogin(!autoLogin)}
+              className="form-checkbox h-4 w-4 text-blue-600"
+              disabled={isLoading}
+            />
+            <label htmlFor="autoLogin" className="text-sm text-gray-700 select-none">
+              자동 로그인
+            </label>
           </div>
           
           <Button

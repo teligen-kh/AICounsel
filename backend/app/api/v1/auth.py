@@ -54,11 +54,11 @@ async def get_auth_service():
     db = await get_database()
     return AuthService(db)
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), 
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), 
                     auth_service: AuthService = Depends(get_auth_service)) -> Dict[str, Any]:
     """현재 사용자 정보 조회"""
     token = credentials.credentials
-    user_info = auth_service.verify_token(token)
+    user_info = await auth_service.verify_token(token)
     if not user_info:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -100,9 +100,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem('token', data.access_token);
       
       // 사용자 정보 저장
-      localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.setItem('user', JSON.stringify(data.user_info));
       
-      dispatch({ type: 'LOGIN_SUCCESS', payload: data.user });
+      // 자동 로그인이 체크되어 있으면 이메일과 비밀번호 저장
+      const autoLogin = localStorage.getItem('autoLogin');
+      if (autoLogin === 'true') {
+        localStorage.setItem('savedEmail', credentials.email);
+        localStorage.setItem('savedPassword', credentials.password);
+      } else {
+        // 자동 로그인이 해제되어 있으면 저장된 정보 삭제
+        localStorage.removeItem('savedEmail');
+        localStorage.removeItem('savedPassword');
+      }
+      
+      dispatch({ type: 'LOGIN_SUCCESS', payload: data.user_info });
     } catch (error) {
       dispatch({ 
         type: 'LOGIN_FAILURE', 

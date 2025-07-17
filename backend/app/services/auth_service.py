@@ -379,7 +379,7 @@ class AuthService:
                 "error": str(e)
             }
     
-    def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
+    async def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
         """토큰 검증"""
         try:
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
@@ -388,7 +388,7 @@ class AuthService:
                 return None
             
             # 세션 확인
-            session = self.sessions_collection.find_one({
+            session = await self.sessions_collection.find_one({
                 "access_token": token,
                 "expires_at": {"$gt": datetime.now()}
             })
@@ -397,7 +397,7 @@ class AuthService:
                 return None
             
             # 사용자 정보 조회
-            user = self.users_collection.find_one({"id": user_id})
+            user = await self.users_collection.find_one({"id": user_id})
             if not user:
                 return None
             

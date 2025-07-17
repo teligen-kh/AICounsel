@@ -8,6 +8,7 @@ from .formatting_service import FormattingService
 from .model_manager import get_model_manager, ModelType
 from .llm_processors import LLMProcessorFactory, BaseLLMProcessor
 from .llama_cpp_processor import LlamaCppProcessor
+from .finetuned_processor import get_finetuned_processor
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import os
 import logging
@@ -30,7 +31,7 @@ class IntentType(Enum):
     UNKNOWN = "unknown"  # 알 수 없음
 
 class LLMService:
-    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, use_llama_cpp: bool = True):
+    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, use_llama_cpp: bool = True, use_finetuned: bool = True):
         """
         LLM 서비스 초기화
         
@@ -38,17 +39,30 @@ class LLMService:
             db: MongoDB 데이터베이스 연결
             use_db_priority: DB 우선 검색 모드 사용 여부
             use_llama_cpp: llama-cpp-python 사용 여부 (기본값: True)
+            use_finetuned: 파인튜닝된 모델 사용 여부 (기본값: True)
         """
         self.db = db
         self.use_db_priority = use_db_priority
         self.model_type = "phi-3.5-mini-instruct"  # 기본 모델
         self.use_llama_cpp = use_llama_cpp
+        self.use_finetuned = use_finetuned
         
-        # llama-cpp 사용 여부에 따른 초기화
-        if use_llama_cpp:
-            self._initialize_llama_cpp()
+        # 모델 초기화 (파인튜닝된 모델 우선)
+        if use_finetuned:
+            try:
+                self._initialize_finetuned()
+            except Exception as e:
+                logging.warning(f"파인튜닝된 모델 초기화 실패, 기본 모델로 폴백: {str(e)}")
+                if use_llama_cpp:
+                    self._initialize_llama_cpp()
+                else:
+                    self._initialize_transformers()
         else:
-            self._initialize_transformers()
+            # llama-cpp 사용 여부에 따른 초기화
+            if use_llama_cpp:
+                self._initialize_llama_cpp()
+            else:
+                self._initialize_transformers()
         
         # MongoDB 검색 서비스 초기화 (비동기로 처리)
         if db is not None and use_db_priority:
@@ -66,15 +80,26 @@ class LLMService:
             'professional_conversations': 0,
             'db_responses': 0,
             'llama_responses': 0,
+            'finetuned_responses': 0,
             'errors': 0,
             'total_processing_time': 0,
             'db_processing_time': 0,
             'llama_processing_time': 0,
+            'finetuned_processing_time': 0,
             'error_processing_time': 0,
             'min_processing_time': float('inf'),
             'max_processing_time': 0,
             'processing_times': []  # 모든 처리 시간 기록
         }
+
+    def _initialize_finetuned(self):
+        """파인튜닝된 모델 초기화"""
+        try:
+            self.finetuned_processor = get_finetuned_processor()
+            logging.info("✅ 파인튜닝된 모델 초기화 완료")
+        except Exception as e:
+            logging.error(f"파인튜닝된 모델 초기화 실패: {str(e)}")
+            raise
 
     def _initialize_transformers(self):
         """Transformers 기반 초기화"""
@@ -249,7 +274,7 @@ class LLMService:
 
     async def get_conversation_response(self, message: str) -> str:
         """
-        대화 응답 생성 (간단한 버전)
+        대화 응답 생성 (파인튜닝된 모델 우선)
         
         Args:
             message: 사용자 메시지
@@ -258,13 +283,33 @@ class LLMService:
             str: 생성된 응답
         """
         try:
-            if self.use_llama_cpp:
+            # 파인튜닝된 모델 우선 사용
+            if self.use_finetuned and hasattr(self, 'finetuned_processor') and self.finetuned_processor:
+                return await self._handle_finetuned_casual(message)
+            elif self.use_llama_cpp:
                 return await self._handle_llama_cpp_casual(message)
             else:
                 return await self._handle_transformers_casual(message)
         except Exception as e:
             logging.error(f"대화 응답 생성 중 오류: {str(e)}")
             return "죄송합니다. 응답을 생성하는 중 오류가 발생했습니다."
+
+    async def _handle_finetuned_casual(self, message: str) -> str:
+        """파인튜닝된 모델로 일상 대화 처리"""
+        try:
+            if hasattr(self, 'finetuned_processor') and self.finetuned_processor:
+                # 파인튜닝된 모델로 응답 생성
+                prompt = f"사용자: {message}\n상담사:"
+                response = self.finetuned_processor.generate_response(prompt, max_length=256, temperature=0.7)
+                self.response_stats['finetuned_responses'] += 1
+                return response
+            else:
+                # 폴백: 기본 모델 사용
+                return await self._handle_llama_cpp_casual(message)
+        except Exception as e:
+            logging.error(f"파인튜닝된 모델 응답 생성 실패: {str(e)}")
+            # 폴백: 기본 모델 사용
+            return await self._handle_llama_cpp_casual(message)
 
     async def _handle_llama_cpp_casual(self, message: str) -> str:
         """llama-cpp를 사용한 일상 대화 처리"""
@@ -380,10 +425,16 @@ class LLMService:
     async def _enhance_db_answer_with_llm(self, message: str, db_answer: str) -> str:
         """DB 답변을 LLM으로 강화"""
         try:
-            if self.use_llama_cpp:
+            # 파인튜닝된 모델 우선 사용
+            if self.use_finetuned and hasattr(self, 'finetuned_processor') and self.finetuned_processor:
+                prompt = f"사용자 질문: {message}\nDB 답변: {db_answer}\n상담사:"
+                enhanced_answer = self.finetuned_processor.generate_response(prompt, max_length=256, temperature=0.7)
+                self.response_stats['finetuned_responses'] += 1
+            elif self.use_llama_cpp and hasattr(self, 'llama_cpp_processor'):
                 # llama-cpp를 사용한 강화
                 prompt = self.llama_cpp_processor.create_professional_prompt(message, db_answer)
                 enhanced_answer = self.llama_cpp_processor.generate_response(prompt)
+                self.response_stats['llama_responses'] += 1
             else:
                 # transformers를 사용한 강화
                 if not self.processor:
@@ -391,9 +442,9 @@ class LLMService:
                 
                 prompt = self.processor.create_professional_prompt(message, db_answer)
                 enhanced_answer = self.processor.generate_response(prompt)
+                self.response_stats['llama_responses'] += 1
             
             if enhanced_answer:
-                self.response_stats['llama_responses'] += 1
                 return enhanced_answer
             else:
                 # LLM 강화 실패 시 DB 답변 그대로 반환

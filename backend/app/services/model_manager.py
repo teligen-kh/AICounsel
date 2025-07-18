@@ -10,6 +10,7 @@ from enum import Enum
 class ModelType(Enum):
     """사용 가능한 모델 타입"""
     LLAMA_2_7B_CHAT = "llama-2-7b-chat"
+    LLAMA_3_1_8B_INSTRUCT = "llama-3.1-8b-instruct"
 
 class ModelConfig:
     """모델별 설정"""
@@ -32,6 +33,13 @@ class ModelManager:
                            "models", "llama-2-7b-chat.Q4_K_M.gguf"),
                 max_tokens=50,
                 temperature=0.6
+            ),
+            ModelType.LLAMA_3_1_8B_INSTRUCT.value: ModelConfig(
+                "Llama-3.1-8B-Instruct",
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
+                           "models", "Llama-3.1-8B-Instruct"),
+                max_tokens=200,
+                temperature=0.7
             )
         }
         

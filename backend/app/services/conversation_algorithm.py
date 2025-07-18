@@ -52,6 +52,11 @@ class ConversationAlgorithm:
             r"매뉴얼", r"매뉴얼", r"가이드", r"도움말", r"헬프", r"help"
         ]
         
+        # 일상 대화로 분류할 패턴 (복사기 관련 일상 대화)
+        self.casual_office_patterns = [
+            r"복사기", r"복사", r"스캔", r"팩스", r"복사용지", r"복사지"
+        ]
+        
         # 질문 패턴
         self.question_patterns = [
             r"어떻게", r"무엇", r"언제", r"어디서", r"왜", r"어떤", r"몇", r"얼마",
@@ -89,7 +94,13 @@ class ConversationAlgorithm:
         """
         message_lower = message.lower().strip()
         
-        # 전문 상담 패턴 확인 (우선순위 높음)
+        # 일상 대화로 분류할 패턴 먼저 확인 (복사기 관련 일상 대화)
+        for pattern in self.casual_office_patterns:
+            if re.search(pattern, message_lower):
+                logging.info(f"Casual office conversation detected: {message[:50]}...")
+                return "casual"
+        
+        # 전문 상담 패턴 확인
         for pattern in self.professional_patterns:
             if re.search(pattern, message_lower):
                 logging.info(f"Professional conversation detected: {message[:50]}...")

@@ -19,36 +19,16 @@ _formatting_service: Optional[FormattingService] = None
 
 def _should_use_llama_cpp() -> bool:
     """llama-cpp 사용 여부를 결정합니다."""
-    # 환경 변수로 제어 가능
-    use_llama_cpp = os.getenv("USE_LLAMA_CPP", "true").lower() == "true"
-    
-    # GGUF 모델 파일 존재 여부 확인 (Phi-3.5 모델)
-    if use_llama_cpp:
-        base_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "models")
-        gguf_file = os.path.join(base_path, "Phi-3.5-mini-instruct-Q8_0.gguf")
-        
-        if os.path.exists(gguf_file):
-            logging.info(f"GGUF 모델 발견: {gguf_file}")
-            return True
-        else:
-            logging.warning(f"llama-cpp 사용 설정되었지만 GGUF 모델 파일이 없습니다: {gguf_file}")
-            return False
-    
+    # Llama-3.1-8B-Instruct 모델을 사용하므로 transformers 사용
     return False
 
 async def get_llm_service() -> LLMService:
     """LLM 서비스 인스턴스를 반환합니다."""
     global _llm_service
     if _llm_service is None:
-        db = await get_database()
-        use_llama_cpp = _should_use_llama_cpp()
-        
-        if use_llama_cpp:
-            logging.info("llama-cpp-python을 사용하여 LLM 서비스를 초기화합니다.")
-            _llm_service = LLMService(db, use_llama_cpp=True)
-        else:
-            logging.info("Transformers를 사용하여 LLM 서비스를 초기화합니다.")
-            _llm_service = LLMService(db, use_llama_cpp=False)
+        # 순수 LLM 모드로 초기화 (DB 비활성화)
+        logging.info("순수 LLM 모드로 LLM 서비스를 초기화합니다.")
+        _llm_service = LLMService(use_db_mode=False, use_llama_cpp=False, use_finetuned=False)
         
         logging.info("LLM 서비스 인스턴스 생성 완료")
     return _llm_service
@@ -101,6 +81,24 @@ def reset_services():
 def get_model_manager():
     """모델 매니저 인스턴스를 반환합니다."""
     return get_model_manager()
+
+def enable_db_mode():
+    """DB 연동 모드를 활성화합니다."""
+    global _llm_service
+    if _llm_service:
+        db = get_database()
+        search_service = MongoDBSearchService(db)
+        _llm_service.inject_db_service(search_service)
+        _llm_service.set_db_mode(True)
+        logging.info("DB 연동 모드 활성화 완료")
+
+def disable_db_mode():
+    """DB 연동 모드를 비활성화합니다."""
+    global _llm_service
+    if _llm_service:
+        _llm_service.remove_db_service()
+        _llm_service.set_db_mode(False)
+        logging.info("DB 연동 모드 비활성화 완료")
 
 # FastAPI 의존성 함수들
 async def get_db() -> AsyncIOMotorDatabase:

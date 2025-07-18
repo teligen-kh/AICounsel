@@ -198,6 +198,8 @@ class LLMProcessorFactory:
         """모델 타입에 따른 프로세서 생성"""
         if model_type == "polyglot-ko-5.8b":
             return PolyglotKoProcessor()
+        elif model_type == "llama-3.1-8b-instruct":
+            return LlamaProcessor()
         elif model_type == "llama-3.1-8b":
             return LlamaProcessor()
         else:

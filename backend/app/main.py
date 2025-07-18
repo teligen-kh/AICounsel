@@ -151,6 +151,45 @@ async def get_api_info(
             "error": str(e)
         }
 
+@app.post("/api/v1/llm/enable-db")
+async def enable_db_mode():
+    """DB 연동 모드를 활성화합니다."""
+    try:
+        from .dependencies import enable_db_mode
+        enable_db_mode()
+        return {"message": "DB 연동 모드가 활성화되었습니다.", "status": "success"}
+    except Exception as e:
+        logger.error(f"DB 모드 활성화 오류: {str(e)}")
+        return {"message": f"DB 모드 활성화 실패: {str(e)}", "status": "error"}
+
+@app.post("/api/v1/llm/disable-db")
+async def disable_db_mode():
+    """DB 연동 모드를 비활성화합니다."""
+    try:
+        from .dependencies import disable_db_mode
+        disable_db_mode()
+        return {"message": "DB 연동 모드가 비활성화되었습니다.", "status": "success"}
+    except Exception as e:
+        logger.error(f"DB 모드 비활성화 오류: {str(e)}")
+        return {"message": f"DB 모드 비활성화 실패: {str(e)}", "status": "error"}
+
+@app.get("/api/v1/llm/status")
+async def get_llm_status():
+    """LLM 서비스 상태를 조회합니다."""
+    try:
+        from .dependencies import get_llm_service
+        llm_service = await get_llm_service()
+        
+        return {
+            "db_mode": llm_service.use_db_mode,
+            "db_service_available": llm_service.search_service is not None,
+            "model_type": llm_service.model_type,
+            "stats": llm_service.get_response_stats()
+        }
+    except Exception as e:
+        logger.error(f"LLM 상태 조회 오류: {str(e)}")
+        return {"error": str(e)}
+
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",

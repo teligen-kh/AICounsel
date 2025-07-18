@@ -46,11 +46,17 @@ export function LoginForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // 자동 로그인 상태를 먼저 저장
     if (autoLogin) {
       localStorage.setItem('autoLogin', 'true');
     } else {
       localStorage.removeItem('autoLogin');
+      // 자동 로그인 해제 시 저장된 정보도 삭제
+      localStorage.removeItem('savedEmail');
+      localStorage.removeItem('savedPassword');
     }
+    
     await login(formData);
   };
 

@@ -2,7 +2,8 @@
 cd D:\AICounsel\finetune_tool
 venv_finetune\Scripts\activate
 
-
+teligen.kh@gmail.com
+@Telikh1205
 
 
 

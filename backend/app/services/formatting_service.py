@@ -91,8 +91,8 @@ class FormattingService:
             response = response.replace(keyword, f'\n{keyword}')
         
         # 응답 길이 제한 (문자 수 기준)
-        if len(response) > 800:
-            response = response[:800] + "..."
+        if len(response) > 1500:
+            response = response[:1500] + "..."
         
         # 줄 정리 (빈 줄 제거, 앞뒤 공백 제거)
         lines = []
@@ -135,8 +135,8 @@ class FormattingService:
                 response = response.replace(keyword, f'\n{keyword}')
             
             # 응답 길이 제한 (문자 수 기준)
-            if len(response) > 800:
-                response = response[:800] + "..."
+            if len(response) > 1500:
+                response = response[:1500] + "..."
             
             # 줄 정리 (빈 줄 제거, 앞뒤 공백 제거)
             lines = []

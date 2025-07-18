@@ -31,66 +31,67 @@ class IntentType(Enum):
     UNKNOWN = "unknown"  # 알 수 없음
 
 class LLMService:
-    def __init__(self, db: AsyncIOMotorDatabase = None, use_db_priority: bool = True, use_llama_cpp: bool = True, use_finetuned: bool = True):
+    def __init__(self, use_db_mode: bool = False, use_llama_cpp: bool = False, use_finetuned: bool = False):
         """
-        LLM 서비스 초기화
+        순수 LLM 서비스 초기화 (DB 의존성 제거)
         
         Args:
-            db: MongoDB 데이터베이스 연결
-            use_db_priority: DB 우선 검색 모드 사용 여부
-            use_llama_cpp: llama-cpp-python 사용 여부 (기본값: True)
-            use_finetuned: 파인튜닝된 모델 사용 여부 (기본값: True)
+            use_db_mode: DB 연동 모드 사용 여부 (기본값: False)
+            use_llama_cpp: llama-cpp-python 사용 여부 (기본값: False)
+            use_finetuned: 파인튜닝된 모델 사용 여부 (기본값: False)
         """
-        self.db = db
-        self.use_db_priority = use_db_priority
-        self.model_type = "phi-3.5-mini-instruct"  # 기본 모델
+        self.use_db_mode = use_db_mode
         self.use_llama_cpp = use_llama_cpp
         self.use_finetuned = use_finetuned
+        self.model_type = "llama-3.1-8b-instruct"  # 기본 모델
         
-        # 모델 초기화 (파인튜닝된 모델 우선)
-        if use_finetuned:
-            try:
-                self._initialize_finetuned()
-            except Exception as e:
-                logging.warning(f"파인튜닝된 모델 초기화 실패, 기본 모델로 폴백: {str(e)}")
-                if use_llama_cpp:
-                    self._initialize_llama_cpp()
-                else:
-                    self._initialize_transformers()
-        else:
-            # llama-cpp 사용 여부에 따른 초기화
-            if use_llama_cpp:
-                self._initialize_llama_cpp()
-            else:
-                self._initialize_transformers()
+        # 원본 Llama-3.1-8B-Instruct 모델 직접 초기화
+        self._initialize_original_llama()
         
-        # MongoDB 검색 서비스 초기화 (비동기로 처리)
-        if db is not None and use_db_priority:
-            self.search_service = MongoDBSearchService(db)
-        else:
-            self.search_service = None
-        
-        # 고객 응대 알고리즘 초기화
-        self.conversation_algorithm = ConversationAlgorithm()
+        # DB 서비스는 외부에서 주입받음 (의존성 분리)
+        self.search_service = None
         
         # 응답 시간 통계 초기화
         self.response_stats = {
             'total_requests': 0,
-            'casual_conversations': 0,
-            'professional_conversations': 0,
-            'db_responses': 0,
             'llama_responses': 0,
-            'finetuned_responses': 0,
+            'db_responses': 0,
             'errors': 0,
             'total_processing_time': 0,
-            'db_processing_time': 0,
             'llama_processing_time': 0,
-            'finetuned_processing_time': 0,
+            'db_processing_time': 0,
             'error_processing_time': 0,
             'min_processing_time': float('inf'),
             'max_processing_time': 0,
-            'processing_times': []  # 모든 처리 시간 기록
+            'processing_times': []
         }
+
+    def _initialize_original_llama(self):
+        """원본 Llama-3.1-8B-Instruct 모델 직접 초기화"""
+        try:
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+            import torch
+            
+            # 모델 경로 설정
+            model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
+                                    "models", "Llama-3.1-8B-Instruct")
+            
+            logging.info(f"원본 Llama-3.1-8B-Instruct 모델 로딩 중: {model_path}")
+            
+            # 토크나이저와 모델 로드
+            self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                torch_dtype=torch.float16,
+                device_map="auto",
+                trust_remote_code=True
+            )
+            
+            logging.info("✅ 원본 Llama-3.1-8B-Instruct 모델 로딩 완료")
+            
+        except Exception as e:
+            logging.error(f"원본 Llama 모델 초기화 실패: {str(e)}")
+            raise
 
     def _initialize_finetuned(self):
         """파인튜닝된 모델 초기화"""
@@ -191,14 +192,20 @@ class LLMService:
         else:
             return self.model_manager.get_current_model_config()
 
-    def set_db_priority_mode(self, enabled: bool):
-        """DB 우선 검색 모드를 설정합니다."""
-        self.use_db_priority = enabled
-        if enabled and self.db is not None:
-            self.search_service = MongoDBSearchService(self.db)
-        else:
-            self.search_service = None
-        logging.info(f"DB priority mode: {'enabled' if enabled else 'disabled'}")
+    def inject_db_service(self, db_service):
+        """DB 서비스를 외부에서 주입받습니다."""
+        self.search_service = db_service
+        logging.info("DB 서비스 주입 완료")
+
+    def remove_db_service(self):
+        """DB 서비스를 제거합니다."""
+        self.search_service = None
+        logging.info("DB 서비스 제거 완료")
+
+    def set_db_mode(self, enabled: bool):
+        """DB 연동 모드를 설정합니다."""
+        self.use_db_mode = enabled
+        logging.info(f"DB 연동 모드: {'활성화' if enabled else '비활성화'}")
     
     def set_conversation_style(self, style: str):
         """대화 스타일을 설정합니다."""
@@ -222,7 +229,7 @@ class LLMService:
 
     async def process_message(self, message: str, conversation_id: str = None) -> str:
         """
-        고객 응대 알고리즘에 따른 메시지 처리
+        모듈화된 메시지 처리 (DB 모드/순수 LLM 모드 자동 선택)
         
         Args:
             message: 사용자 메시지
@@ -235,26 +242,17 @@ class LLMService:
         self.response_stats['total_requests'] += 1
         
         try:
-            # 1. 사용자 의도 분석
-            intent = self.conversation_algorithm.analyze_intent(message)
-            logging.info(f"사용자 의도 분석 결과: {intent}")
-            
-            # 2. 의도에 따른 처리
-            if intent == IntentType.CASUAL:
-                self.response_stats['casual_conversations'] += 1
-                response = await self._handle_casual_conversation(message)
-            elif intent == IntentType.PROFESSIONAL:
-                self.response_stats['professional_conversations'] += 1
-                response = await self._handle_professional_conversation(message)
+            # DB 모드가 활성화되고 DB 서비스가 있으면 DB 연동 처리
+            if self.use_db_mode and self.search_service:
+                response = await self._handle_db_enhanced_message(message)
             else:
-                # 기본적으로 일상 대화로 처리
-                self.response_stats['casual_conversations'] += 1
-                response = await self._handle_casual_conversation(message)
+                # 순수 LLM 모드: 원본 모델만 사용
+                response = await self._handle_pure_llm_message(message)
             
-            # 3. 응답 포맷팅
+            # 응답 포맷팅
             formatted_response = await self.format_and_send_response(response)
             
-            # 4. 통계 업데이트
+            # 통계 업데이트
             end_time = time.time()
             processing_time = (end_time - start_time) * 1000  # ms
             self._update_stats(processing_time, True)
@@ -271,6 +269,41 @@ class LLMService:
             self._update_stats(processing_time, False)
             
             return "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+
+    async def _handle_pure_llm_message(self, message: str) -> str:
+        """순수 LLM 모드: 원본 모델만 사용"""
+        logging.info("순수 LLM 모드로 메시지 처리")
+        return await self._handle_transformers_casual(message)
+
+    async def _handle_db_enhanced_message(self, message: str) -> str:
+        """DB 연동 모드: DB 검색 + LLM 강화"""
+        logging.info("DB 연동 모드로 메시지 처리")
+        
+        try:
+            # 1. DB에서 관련 답변 검색
+            db_start_time = time.time()
+            db_answer = await self.search_service.search_answer(message)
+            db_end_time = time.time()
+            db_processing_time = (db_end_time - db_start_time) * 1000
+            
+            self.response_stats['db_processing_time'] += db_processing_time
+            
+            if db_answer:
+                self.response_stats['db_responses'] += 1
+                logging.info(f"DB에서 답변 찾음: {db_answer[:100]}...")
+                
+                # 2. LLM으로 답변 강화
+                enhanced_answer = await self._enhance_db_answer_with_llm(message, db_answer)
+                return enhanced_answer
+            else:
+                logging.info("DB에서 관련 답변을 찾지 못함")
+                # DB에서 답변을 찾지 못한 경우 순수 LLM으로 처리
+                return await self._handle_pure_llm_message(message)
+                
+        except Exception as e:
+            logging.error(f"DB 연동 처리 중 오류: {str(e)}")
+            # 오류 발생 시 순수 LLM으로 폴백
+            return await self._handle_pure_llm_message(message)
 
     async def get_conversation_response(self, message: str) -> str:
         """
@@ -337,25 +370,62 @@ class LLMService:
             return "죄송합니다. 응답 생성 중 오류가 발생했습니다."
 
     async def _handle_transformers_casual(self, message: str) -> str:
-        """Transformers를 사용한 일상 대화 처리"""
+        """원본 Llama-3.1-8B-Instruct 모델을 사용한 일상 대화 처리 (Hugging Face 공식 방식)"""
         try:
-            if not self.processor:
-                raise RuntimeError("LLM processor not initialized")
+            # Hugging Face 공식 chat template 사용
+            messages = [
+                {"role": "user", "content": message}
+            ]
             
-            # 프롬프트 생성
-            prompt = self.processor.create_casual_prompt(message)
+            # 공식 chat template 적용
+            formatted_prompt = self.tokenizer.apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=True
+            )
             
-            # 응답 생성
-            response = self.processor.generate_response(prompt)
+            # 토크나이징
+            inputs = self.tokenizer(formatted_prompt, return_tensors="pt")
             
-            if response:
+            # Hugging Face 최적화 파라미터 사용
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    inputs.input_ids,
+                    max_new_tokens=1024,       # 더 긴 응답 허용 (512 -> 1024)
+                    temperature=0.7,           # 적당한 창의성
+                    top_p=0.9,                 # nucleus sampling
+                    do_sample=True,            # 샘플링 활성화
+                    repetition_penalty=1.1,    # 반복 방지
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id
+                )
+            
+            # 응답 디코딩 (공식 방식)
+            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            # 사용자 프롬프트 제거하고 어시스턴트 응답만 추출
+            # Hugging Face 공식 chat template 형식에 맞춰 처리
+            if "<|im_start|>assistant" in response:
+                assistant_response = response.split("<|im_start|>assistant")[-1].strip()
+            elif "assistant" in response:
+                # 다른 형식의 assistant 태그 처리
+                assistant_response = response.split("assistant")[-1].strip()
+            else:
+                # 프롬프트 제거
+                assistant_response = response.replace(formatted_prompt, "").strip()
+            
+            # 특수 토큰 제거
+            assistant_response = assistant_response.replace("<|im_end|>", "").replace("<|im_start|>", "")
+            assistant_response = assistant_response.replace("<|endoftext|>", "")
+            
+            if assistant_response:
                 self.response_stats['llama_responses'] += 1
-                return response
+                return assistant_response
             else:
                 return "죄송합니다. 적절한 응답을 생성하지 못했습니다."
                 
         except Exception as e:
-            logging.error(f"Transformers 일상 대화 처리 오류: {str(e)}")
+            logging.error(f"원본 Llama 일상 대화 처리 오류: {str(e)}")
             return "죄송합니다. 응답 생성 중 오류가 발생했습니다."
 
     async def search_and_enhance_answer(self, message: str) -> str:
@@ -423,32 +493,49 @@ class LLMService:
         return await self.search_and_enhance_answer(message)
 
     async def _enhance_db_answer_with_llm(self, message: str, db_answer: str) -> str:
-        """DB 답변을 LLM으로 강화"""
+        """DB 답변을 원본 Llama-3.1-8B-Instruct 모델로 강화"""
         try:
-            # 파인튜닝된 모델 우선 사용
-            if self.use_finetuned and hasattr(self, 'finetuned_processor') and self.finetuned_processor:
-                prompt = f"사용자 질문: {message}\nDB 답변: {db_answer}\n상담사:"
-                enhanced_answer = self.finetuned_processor.generate_response(prompt, max_length=256, temperature=0.7)
-                self.response_stats['finetuned_responses'] += 1
-            elif self.use_llama_cpp and hasattr(self, 'llama_cpp_processor'):
-                # llama-cpp를 사용한 강화
-                prompt = self.llama_cpp_processor.create_professional_prompt(message, db_answer)
-                enhanced_answer = self.llama_cpp_processor.generate_response(prompt)
-                self.response_stats['llama_responses'] += 1
-            else:
-                # transformers를 사용한 강화
-                if not self.processor:
-                    raise RuntimeError("LLM processor not initialized")
-                
-                prompt = self.processor.create_professional_prompt(message, db_answer)
-                enhanced_answer = self.processor.generate_response(prompt)
-                self.response_stats['llama_responses'] += 1
+            # LLaMA 형식 프롬프트
+            formatted_prompt = f"""<|im_start|>user
+사용자 질문: {message}
+
+DB 답변: {db_answer}
+
+위 답변을 친절하고 이해하기 쉽게 정리해주세요.<|im_end|>
+<|im_start|>assistant
+"""
             
-            if enhanced_answer:
-                return enhanced_answer
+            # 토크나이징
+            inputs = self.tokenizer(formatted_prompt, return_tensors="pt")
+            
+            # 생성
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    inputs.input_ids,
+                    max_new_tokens=200,
+                    temperature=0.7,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.eos_token_id
+                )
+            
+            # 응답 디코딩
+            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            # 사용자 프롬프트 제거하고 어시스턴트 응답만 추출
+            if "<|im_start|>assistant" in response:
+                assistant_response = response.split("<|im_start|>assistant")[-1].strip()
             else:
-                # LLM 강화 실패 시 DB 답변 그대로 반환
-                return self._format_db_answer(db_answer)
+                assistant_response = response.replace(formatted_prompt, "").strip()
+            
+            # LLaMA 특수 토큰 제거
+            assistant_response = assistant_response.replace("<|im_end|>", "").replace("<|im_start|>", "")
+            
+            if assistant_response:
+                self.response_stats['llama_responses'] += 1
+                return assistant_response
+            
+            # LLM 강화 실패 시 DB 답변 그대로 반환
+            return self._format_db_answer(db_answer)
                 
         except Exception as e:
             logging.error(f"DB 답변 LLM 강화 중 오류: {str(e)}")
@@ -465,8 +552,8 @@ class LLMService:
             formatted = re.sub(r'\s+', ' ', formatted)  # 연속된 공백을 하나로
             
             # 길이 제한
-            if len(formatted) > 500:
-                formatted = formatted[:500] + "..."
+            if len(formatted) > 1000:
+                formatted = formatted[:1000] + "..."
             
             return formatted
             
@@ -482,9 +569,9 @@ class LLMService:
         # 기본 정리
         response = response.strip()
         
-        # 길이 제한
-        if len(response) > 300:
-            response = response[:300] + "..."
+        # 길이 제한 (300 -> 1000으로 증가)
+        if len(response) > 1000:
+            response = response[:1000] + "..."
         
         return response
 

@@ -6,12 +6,59 @@ teligen.kh@gmail.com
 @Telikh1205
 
 
+2025-07-22
+
+상담 플랫폼 AI 설정 및 자동화 가이드
+배경
+목표: 텔리젠 상담 플랫폼에서 AI가 고객과 직접 소통하며, 300개 FAQ 응답, QR코드 접속, 3,000콜/일, 1~2초 응답(GPU 목표)을 달성. 일상 응대, 전문 상담(DB 기반), 비상담/욕설 대응 제공.
+현재 상태: Llama-3.1-8B-Instruct 모델 사용, knowledge_base에 표준화된 상담 내용, conversations에 실시간 대화 저장 계획. 수동 관리 대신 자동화 필요.
+DB 구조
+conversations 테이블: 대화 기록 저장 (시간, 사용자 입력, AI 응답, 분류: casual, technical, non_counseling, profanity).
+knowledge_base 테이블: 질문, 답변, 키워드 저장.
+input_keywords 테이블: 키워드와 분류 저장.
+자동화 알고리즘
+목적: 대화 저장 후 knowledge_base와 input_keywords에 자동 업데이트.
+단계:
+AI가 고객과 소통 후 conversations에 저장.
+LLM으로 입력을 "casual", "technical", "non_counseling", "profanity"로 분류.
+knowledge_base에 동일 질문 없으면 추가 (유사성 체크로 중복 방지).
+soynlp로 키워드 추출, input_keywords에 반영.
+입력 분류 전략
+초기 필터링: 전문 상담 키워드(예: "포스", "키오스크", "프린터")로 DB 처리, 나머지 LLM 의도 분석.
+LLM 분류: casual(일상), non_counseling(비상담), profanity(욕설).
+프롬프트 설정
+시스템 프롬프트: 텔리젠 친절한 AI 상담사 역할 정의.
+인사: "안녕하세요! 어떻게 도와드릴까요?"
+일상 대화: 친근한 답변.
+전문 상담: DB 정보 풀어서 설명, 없으면 "상담사 연락 요청".
+비상담: "해당 질문은 답변 드릴 수 없습니다."
+욕설: "욕설 시 30분 후 재문의 요청".
+답변: 2문장, 자연스럽게.
+생성 파라미터 설정
+temperature: 0.3 (일관성 유지).
+max_tokens: 75 (2문장 보장).
+top_p: 0.8 (관련성 강화).
+top_k: 30 (간결함 유지).
+repeat_penalty: 1.2 (반복 최소화).
+키워드 추출 및 분류 개선
+배경: input_keywords (1734개)에서 전문 상담 키워드만 선별.
+키워드 추출 규칙:
+도메인 관련성: 기술/업무 용어(예: "포스", "설치") 우선.
+빈도 및 맥락: 2회 이상 등장하거나 기술 절차(예: "로그인") 연관 시 포함.
+업계 용어 우선: 상담 맥락(포스, 클라우드 등) 관련 용어.
+수동 검토: 초기 50개 추출 후 확인 후 확장.
+초기 키워드 예시: "프로그램재설치", "설치요구", "포스", "키오스크", "프린터", "영수증", "설치", "작동", "오류", "재시작", "클라우드", "거래명세서", "직인", "계좌번호", "업데이트", "로그인", "백업", "출력", "단말기", "설정".
+비전문 제외 예시: "고객님", "팀장", "아침", "커피", "감사".
+테스트 지시
+"안녕하세요?" → casual, "안녕하세요! 어떻게 도와드릴까요?"
+"포스 설치 방법" → technical, DB 응답 (예: "포스 설치는 smart.arumnet.com에서 진행하세요.").
+"한국 역사" → non_counseling, "저는 텔리젠 AI 상담사로 해당 질문은 답변 드릴 수 없습니다."
+"바보 AI야" → profanity, "욕설을 하시면 응대를 할 수 없습니다. 30분 후 재문의 바랍니다."
+"새로운 질문" → 대화 저장 후 knowledge_base/input_keywords 업데이트 확인.
+추가 고려사항
+유사성 체크: 오탈자/동의어로 중복 방지 (sentence-transformers 사용).
+오탈자 보정: spellchecker로 정정.
+GPU 계획: AWS g4dn.xlarge로 0.5~1초 목표.
+DB 입력: knowledge_base와 input_keywords 초기 데이터 삽입.
 
 
-
-2025-07-11
-다음에 할 일 📋
-백엔드 오류 수정 (Permission.COUNSELING_VIEW → COUNSELING_ACCESS)
-프론트엔드-백엔드 연동 테스트
-파인튜닝 시스템 구축
-실제 아름넷 프로그램 연동

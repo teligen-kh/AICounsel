@@ -151,7 +151,7 @@ async def get_current_user_info(
 ):
     """현재 사용자 정보 조회"""
     user_id = current_user["user_id"]
-    user = auth_service.users_collection.find_one({"id": user_id})
+    user = await auth_service.users_collection.find_one({"id": user_id})
     
     if not user:
         raise HTTPException(

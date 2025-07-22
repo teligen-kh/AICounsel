@@ -5,6 +5,7 @@ from .conversation_algorithm import ConversationAlgorithm
 from .formatting_service import FormattingService
 from .model_manager import get_model_manager, ModelType
 from .input_filter import get_input_filter, InputType
+from ..config import settings, enable_module, disable_module, get_module_status
 import logging
 import time
 from datetime import datetime
@@ -21,19 +22,14 @@ class ChatService:
     - format_and_send_response: 응답 정보 보내기 (포맷팅)
     """
     
-    def __init__(self, db: AsyncIOMotorDatabase, llm_service: LLMService = None):
+    def __init__(self, db: AsyncIOMotorDatabase):
         """
-        ChatService 초기화
+        채팅 서비스 초기화
         
         Args:
-            db: MongoDB 데이터베이스 연결
-            llm_service: LLM 서비스 인스턴스 (의존성 주입)
+            db: MongoDB 데이터베이스 연결 인스턴스
         """
         self.db = db
-        self.llm_service = llm_service or LLMService(db)
-        
-        # 모델 매니저 가져오기
-        self.model_manager = get_model_manager()
         
         # DB 연계 서비스 (LLM과 분리)
         self.db_enhancement_service = DBEnhancementService(db)
@@ -41,24 +37,63 @@ class ChatService:
         # 고객 응대 알고리즘
         self.conversation_algorithm = ConversationAlgorithm()
         
-        # 입력 필터
-        self.input_filter = get_input_filter()
+        # 입력 필터 (설정에 따라 선택)
+        if settings.ENABLE_CONTEXT_AWARE_CLASSIFICATION:
+            from .context_aware_classifier import ContextAwareClassifier
+            self.input_filter = ContextAwareClassifier(db)
+            # LLM 서비스 주입
+            from ..dependencies import get_llm_service
+            import asyncio
+            try:
+                llm_service = asyncio.run(get_llm_service())
+                self.input_filter.inject_llm_service(llm_service)
+            except:
+                pass  # LLM 서비스가 아직 초기화되지 않은 경우
+            logging.info("✅ 문맥 인식 분류기 활성화")
+        else:
+            self.input_filter = get_input_filter()
+            logging.info("✅ 기존 키워드 분류기 사용")
         
-        # 응답 시간 통계
-        self.response_stats = {
-            'total_requests': 0,
-            'casual_conversations': 0,
-            'professional_conversations': 0,
-            'db_responses': 0,
-            'llm_responses': 0,
-            'errors': 0,
-            'total_processing_time': 0,
-            'min_processing_time': float('inf'),
-            'max_processing_time': 0,
-            'processing_times': []
-        }
+        # 자동화 서비스 추가
+        from .automation_service import AutomationService
+        self.automation_service = AutomationService(db)
         
         logging.info("ChatService 초기화 완료")
+    
+    def _initialize_modules(self):
+        """설정에 따라 모듈을 초기화합니다."""
+        # DB 연계 서비스 (설정에 따라 활성화/비활성화)
+        if settings.ENABLE_MONGODB_SEARCH:
+            self.db_enhancement_service = DBEnhancementService(self.db)
+            logging.info("✅ MongoDB 검색 모듈 활성화")
+        else:
+            self.db_enhancement_service = None
+            logging.info("❌ MongoDB 검색 모듈 비활성화")
+        
+        # 고객 응대 알고리즘 (설정에 따라 활성화/비활성화)
+        if settings.ENABLE_CONVERSATION_ANALYSIS:
+            self.conversation_algorithm = ConversationAlgorithm()
+            logging.info("✅ 고객 질문 분석 모듈 활성화")
+        else:
+            self.conversation_algorithm = None
+            logging.info("❌ 고객 질문 분석 모듈 비활성화")
+        
+        # 입력 필터 (설정에 따라 활성화/비활성화)
+        if settings.ENABLE_INPUT_FILTERING:
+            self.input_filter = get_input_filter()
+            logging.info("✅ 입력 필터링 모듈 활성화")
+        else:
+            self.input_filter = None
+            logging.info("❌ 입력 필터링 모듈 비활성화")
+    
+    def _log_module_status(self):
+        """모듈 상태를 로깅합니다."""
+        status = get_module_status()
+        logging.info("=== 모듈 활성화 상태 ===")
+        for module, enabled in status.items():
+            status_str = "✅ 활성화" if enabled else "❌ 비활성화"
+            logging.info(f"{module}: {status_str}")
+        logging.info("=======================")
 
     # ===== 업무별 메서드 분리 =====
 
@@ -150,80 +185,100 @@ class ChatService:
 
     async def process_message(self, message: str, conversation_id: str = None) -> str:
         """
-        메시지 처리 - 업무별 메서드 통합 호출
+        사용자 메시지를 처리하고 응답을 생성합니다.
         
         Args:
             message: 사용자 메시지
             conversation_id: 대화 ID
             
         Returns:
-            처리된 응답
+            str: AI 응답
         """
         start_time = time.time()
-        self.response_stats['total_requests'] += 1
         
         try:
-            logging.info(f"메시지 처리 시작: {message[:50]}...")
+            logging.info(f"메시지 처리 시작: {message[:20]}...")
             
-            # 1. 입력 필터 처리 (욕설, 비상담 질문 체크)
+            # 1. 입력 분류
             input_type, details = self.input_filter.classify_input(message)
-            logging.info(f"입력 분류: {input_type.value} - {details['reason']}")
+            logging.info(f"입력 분류: {input_type.value} - {details.get('reason', '')}")
             
-            # 욕설이나 비상담 질문인 경우 템플릿 응답 반환
+            # 2. 분류에 따른 응답 생성
             if input_type in [InputType.PROFANITY, InputType.NON_COUNSELING]:
-                template_response = self.input_filter.get_response_template(
-                    input_type, 
-                    "텔리젠"
-                )
-                logging.info(f"템플릿 응답 사용: {template_response}")
-                
-                # 처리 시간 계산
-                processing_time = (time.time() - start_time) * 1000
-                self.response_stats['total_processing_time'] += processing_time
-                self.response_stats['processing_times'].append(processing_time)
-                
-                logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 상담사 응답 완료")
-                logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 처리 시간: {processing_time:.2f}ms")
-                logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 응답 내용: {template_response[:100]}...")
-                
-                return template_response
-            
-            # 2. 대화 유형 분류 (일반적인 경우)
-            conversation_type = self.conversation_algorithm.classify_conversation_type(message)
-            logging.info(f"대화 유형: {conversation_type}")
-            
-            # 3. 업무별 메서드 호출
-            if conversation_type == "casual":
-                response = await self.get_conversation_response(message)
+                # 템플릿 응답 사용
+                response = self.input_filter.get_response_template(input_type)
+                logging.info(f"템플릿 응답 사용: {response}")
             else:
-                response = await self.search_and_enhance_answer(message)
+                # LLM 또는 DB 기반 응답
+                if input_type == InputType.TECHNICAL:
+                    # 전문 상담 처리
+                    response = await self._handle_technical_conversation(message)
+                else:
+                    # 일상 대화 처리
+                    response = await self._handle_casual_conversation(message)
+            
+            # 3. 자동화 처리 (대화 저장 및 knowledge_base 업데이트)
+            automation_result = await self.automation_service.process_conversation_automation(
+                message, response, input_type.value
+            )
             
             # 4. 응답 포맷팅
-            formatted_response = await self.format_and_send_response(response)
+            formatted_response = await self._format_response(response)
             
-            # 처리 시간 계산
-            processing_time = (time.time() - start_time) * 1000
-            self.response_stats['total_processing_time'] += processing_time
-            self.response_stats['processing_times'].append(processing_time)
-            
-            if processing_time < self.response_stats['min_processing_time']:
-                self.response_stats['min_processing_time'] = processing_time
-            if processing_time > self.response_stats['max_processing_time']:
-                self.response_stats['max_processing_time'] = processing_time
-            
-            # 로깅
-            logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 상담사 응답 완료")
-            logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 처리 시간: {processing_time:.2f}ms")
-            logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}] 응답 내용: {formatted_response[:100]}...")
+            # 5. 처리 시간 기록
+            end_time = time.time()
+            processing_time = (end_time - start_time) * 1000
+            logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 상담사 응답 완료")
+            logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 처리 시간: {processing_time:.2f}ms")
+            logging.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 응답 내용:\n{formatted_response}")
             
             return formatted_response
             
         except Exception as e:
-            error_time = (time.time() - start_time) * 1000
-            self.response_stats['errors'] += 1
-            
-            logging.error(f"메시지 처리 오류: {str(e)}")
+            logging.error(f"메시지 처리 중 오류: {str(e)}")
             return "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+
+    async def _handle_casual_conversation(self, message: str) -> str:
+        """일상 대화 처리"""
+        try:
+            # 기존 LLM 서비스 사용 (새로 생성하지 않음)
+            from ..dependencies import get_llm_service
+            llm_service = await get_llm_service()
+            response = await llm_service.get_conversation_response(message)
+            return response
+        except Exception as e:
+            logging.error(f"일상 대화 처리 오류: {str(e)}")
+            return "안녕하세요! 어떻게 도와드릴까요?"
+
+    async def _handle_technical_conversation(self, message: str) -> str:
+        """전문 상담 처리"""
+        try:
+            # 기존 LLM 서비스 사용 (새로 생성하지 않음)
+            from ..dependencies import get_llm_service
+            llm_service = await get_llm_service()
+            response = await llm_service.search_and_enhance_answer(message)
+            return response
+        except Exception as e:
+            logging.error(f"전문 상담 처리 오류: {str(e)}")
+            return "죄송합니다. 전문 상담사에게 문의해주세요."
+
+    async def _format_response(self, response: str) -> str:
+        """응답 포맷팅"""
+        try:
+            if not response:
+                return "죄송합니다. 응답을 생성할 수 없습니다."
+            
+            # 기본 포맷팅
+            formatted = response.strip()
+            
+            # 너무 긴 응답 자르기
+            if len(formatted) > 1000:
+                formatted = formatted[:1000] + "..."
+            
+            return formatted
+        except Exception as e:
+            logging.error(f"응답 포맷팅 오류: {str(e)}")
+            return response
 
     # ===== 기존 메서드들 (호환성 유지) =====
 

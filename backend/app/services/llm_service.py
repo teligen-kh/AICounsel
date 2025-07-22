@@ -387,15 +387,16 @@ class LLMService:
             # 토크나이징
             inputs = self.tokenizer(formatted_prompt, return_tensors="pt")
             
-            # Hugging Face 최적화 파라미터 사용
+            # Hugging Face 최적화 파라미터 사용 (가이드 권장값)
             with torch.no_grad():
                 outputs = self.model.generate(
                     inputs.input_ids,
-                    max_new_tokens=1024,       # 더 긴 응답 허용 (512 -> 1024)
-                    temperature=0.7,           # 적당한 창의성
-                    top_p=0.9,                 # nucleus sampling
+                    max_new_tokens=75,         # 2문장 보장 (1024 -> 75)
+                    temperature=0.3,           # 일관성 유지 (0.7 -> 0.3)
+                    top_p=0.8,                 # 관련성 강화 (0.9 -> 0.8)
+                    top_k=30,                  # 간결함 유지 (새로 추가)
                     do_sample=True,            # 샘플링 활성화
-                    repetition_penalty=1.1,    # 반복 방지
+                    repetition_penalty=1.2,    # 반복 최소화 (1.1 -> 1.2)
                     pad_token_id=self.tokenizer.eos_token_id,
                     eos_token_id=self.tokenizer.eos_token_id
                 )
@@ -508,14 +509,18 @@ DB 답변: {db_answer}
             # 토크나이징
             inputs = self.tokenizer(formatted_prompt, return_tensors="pt")
             
-            # 생성
+            # 생성 (빠른 응답을 위해 토큰 수 제한)
             with torch.no_grad():
                 outputs = self.model.generate(
                     inputs.input_ids,
-                    max_new_tokens=200,
-                    temperature=0.7,
+                    max_new_tokens=75,         # 200 -> 75로 줄임 (빠른 응답)
+                    temperature=0.3,           # 0.7 -> 0.3으로 줄임 (일관성)
+                    top_p=0.8,                 # 관련성 강화
+                    top_k=30,                  # 간결함 유지
                     do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id
+                    repetition_penalty=1.2,    # 반복 최소화
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id
                 )
             
             # 응답 디코딩
@@ -543,17 +548,36 @@ DB 답변: {db_answer}
             return self._format_db_answer(db_answer)
 
     def _format_db_answer(self, db_answer: str) -> str:
-        """DB 답변 포맷팅"""
+        """DB 답변 포맷팅 (메타데이터 및 불필요한 문자 제거)"""
         try:
             # 기본 정리
             formatted = db_answer.strip()
             
-            # 불필요한 문자 제거
-            formatted = re.sub(r'\s+', ' ', formatted)  # 연속된 공백을 하나로
+            # 메타데이터 패턴 제거 (날짜, 시간, 토큰 등)
+            import re
             
-            # 길이 제한
-            if len(formatted) > 1000:
-                formatted = formatted[:1000] + "..."
+            # 날짜/시간 패턴 제거: | 2024-03-18 02:23:13 |
+            formatted = re.sub(r'\|\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s*\|', '', formatted)
+            
+            # LLaMA 특수 토큰 제거
+            formatted = re.sub(r'<\|im_end\|>', '', formatted)
+            formatted = re.sub(r'<\|im_start\|>', '', formatted)
+            formatted = re.sub(r'<\|endoftext\|>', '', formatted)
+            
+            # 기타 특수 문자 패턴 제거
+            formatted = re.sub(r'\|\s*\|', '', formatted)  # 빈 파이프 제거
+            formatted = re.sub(r'^\|\s*', '', formatted)   # 시작 파이프 제거
+            formatted = re.sub(r'\s*\|$', '', formatted)   # 끝 파이프 제거
+            
+            # 연속된 공백을 하나로
+            formatted = re.sub(r'\s+', ' ', formatted)
+            
+            # 앞뒤 공백 제거
+            formatted = formatted.strip()
+            
+            # 길이 제한 (더 짧게)
+            if len(formatted) > 500:
+                formatted = formatted[:500] + "..."
             
             return formatted
             
@@ -569,9 +593,9 @@ DB 답변: {db_answer}
         # 기본 정리
         response = response.strip()
         
-        # 길이 제한 (300 -> 1000으로 증가)
-        if len(response) > 1000:
-            response = response[:1000] + "..."
+        # 길이 제한 (더 짧게)
+        if len(response) > 500:
+            response = response[:500] + "..."
         
         return response
 

@@ -87,6 +87,10 @@ app.add_middleware(
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 
+# 키워드 관리 API 추가
+from .api.v1 import keywords
+app.include_router(keywords.router, prefix="/api/v1")
+
 @app.get("/")
 async def root():
     """루트 엔드포인트"""
@@ -172,6 +176,28 @@ async def disable_db_mode():
     except Exception as e:
         logger.error(f"DB 모드 비활성화 오류: {str(e)}")
         return {"message": f"DB 모드 비활성화 실패: {str(e)}", "status": "error"}
+
+@app.post("/api/v1/classification/enable-context-aware")
+async def enable_context_aware_classification():
+    """문맥 인식 분류 모듈을 활성화합니다."""
+    try:
+        from .config import enable_module
+        enable_module("context_aware_classification")
+        return {"message": "문맥 인식 분류 모듈이 활성화되었습니다.", "status": "success"}
+    except Exception as e:
+        logger.error(f"문맥 인식 분류 모듈 활성화 오류: {str(e)}")
+        return {"message": f"문맥 인식 분류 모듈 활성화 실패: {str(e)}", "status": "error"}
+
+@app.post("/api/v1/classification/disable-context-aware")
+async def disable_context_aware_classification():
+    """문맥 인식 분류 모듈을 비활성화합니다."""
+    try:
+        from .config import disable_module
+        disable_module("context_aware_classification")
+        return {"message": "문맥 인식 분류 모듈이 비활성화되었습니다.", "status": "success"}
+    except Exception as e:
+        logger.error(f"문맥 인식 분류 모듈 비활성화 오류: {str(e)}")
+        return {"message": f"문맥 인식 분류 모듈 비활성화 실패: {str(e)}", "status": "error"}
 
 @app.get("/api/v1/llm/status")
 async def get_llm_status():

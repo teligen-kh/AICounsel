@@ -7,6 +7,7 @@ from ...services.llm_service import LLMService
 from ...services.model_manager import get_model_manager, ModelType
 from ...database import get_database
 from ...dependencies import get_chat_service, get_llm_service
+from ...config import enable_module, disable_module, get_module_status
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import logging
@@ -45,6 +46,14 @@ class ModelStatusResponse(BaseModel):
     current_model: str
     available_models: List[str]
     loaded_models: List[str]
+
+class ModuleControlRequest(BaseModel):
+    module_name: str
+    action: str  # "enable" or "disable"
+
+class ModuleStatusResponse(BaseModel):
+    modules: Dict[str, bool]
+    message: str
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, chat_service: ChatService = Depends(get_chat_service)):
@@ -303,4 +312,59 @@ async def get_system_metrics():
         
     except Exception as e:
         logging.error(f"System metrics error: {str(e)}")
-        raise HTTPException(status_code=500, detail="시스템 메트릭 조회 중 오류가 발생했습니다.") 
+        raise HTTPException(status_code=500, detail="시스템 메트릭 조회 중 오류가 발생했습니다.")
+
+# ===== 모듈 제어 API =====
+
+@router.post("/modules/control", response_model=ModuleStatusResponse)
+async def control_module(request: ModuleControlRequest):
+    """모듈을 활성화하거나 비활성화합니다."""
+    try:
+        if request.action == "enable":
+            enable_module(request.module_name)
+            message = f"✅ {request.module_name} 모듈이 활성화되었습니다."
+        elif request.action == "disable":
+            disable_module(request.module_name)
+            message = f"❌ {request.module_name} 모듈이 비활성화되었습니다."
+        else:
+            raise HTTPException(status_code=400, detail="잘못된 액션입니다. 'enable' 또는 'disable'을 사용하세요.")
+        
+        modules = get_module_status()
+        return ModuleStatusResponse(modules=modules, message=message)
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.error(f"모듈 제어 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"모듈 제어 실패: {str(e)}")
+
+@router.get("/modules/status", response_model=ModuleStatusResponse)
+async def get_modules_status():
+    """모든 모듈의 상태를 반환합니다."""
+    try:
+        modules = get_module_status()
+        message = "모듈 상태 조회 완료"
+        return ModuleStatusResponse(modules=modules, message=message)
+        
+    except Exception as e:
+        logging.error(f"모듈 상태 조회 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"모듈 상태 조회 실패: {str(e)}")
+
+@router.post("/modules/reset")
+async def reset_modules():
+    """모든 모듈을 기본 상태로 초기화합니다."""
+    try:
+        # 모든 모듈 활성화
+        enable_module("mongodb_search")
+        enable_module("llm_model")
+        enable_module("conversation_analysis")
+        enable_module("response_formatting")
+        enable_module("input_filtering")
+        
+        modules = get_module_status()
+        message = "✅ 모든 모듈이 기본 상태로 초기화되었습니다."
+        return ModuleStatusResponse(modules=modules, message=message)
+        
+    except Exception as e:
+        logging.error(f"모듈 초기화 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"모듈 초기화 실패: {str(e)}") 

@@ -1,3 +1,8 @@
+"""
+AICounsel 의존성 주입 관리 모듈
+서비스 인스턴스의 싱글톤 패턴 관리 및 의존성 주입
+"""
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from .database import get_database
 from .services.llm_service import LLMService
@@ -10,25 +15,48 @@ import logging
 from typing import Optional
 import os
 
-# 전역 서비스 인스턴스
-_llm_service: Optional[LLMService] = None
-_chat_service: Optional[ChatService] = None
-_search_service: Optional[MongoDBSearchService] = None
-_conversation_algorithm: Optional[ConversationAlgorithm] = None
-_formatting_service: Optional[FormattingService] = None
+# 전역 서비스 인스턴스 (싱글톤 패턴)
+_llm_service: Optional[LLMService] = None                    # LLM 서비스 인스턴스
+_chat_service: Optional[ChatService] = None                  # 채팅 서비스 인스턴스
+_search_service: Optional[MongoDBSearchService] = None       # MongoDB 검색 서비스 인스턴스
+_conversation_algorithm: Optional[ConversationAlgorithm] = None  # 고객 응대 알고리즘 인스턴스
+_formatting_service: Optional[FormattingService] = None      # 포맷팅 서비스 인스턴스
 
 def _should_use_llama_cpp() -> bool:
-    """llama-cpp 사용 여부를 결정합니다."""
+    """
+    llama-cpp 사용 여부를 결정합니다.
+    
+    Returns:
+        bool: llama-cpp 사용 여부 (현재는 transformers 사용)
+    """
     # Llama-3.1-8B-Instruct 모델을 사용하므로 transformers 사용
     return False
 
 async def get_llm_service() -> LLMService:
-    """LLM 서비스 인스턴스를 반환합니다."""
+    """
+    LLM 서비스 인스턴스를 반환합니다.
+    싱글톤 패턴으로 인스턴스를 관리합니다.
+    
+    Returns:
+        LLMService: LLM 서비스 인스턴스
+    """
     global _llm_service
     if _llm_service is None:
-        # 순수 LLM 모드로 초기화 (DB 비활성화)
-        logging.info("순수 LLM 모드로 LLM 서비스를 초기화합니다.")
-        _llm_service = LLMService(use_db_mode=False, use_llama_cpp=False, use_finetuned=False)
+        # 설정에 따라 DB 모드 결정
+        from .config import settings
+        use_db_mode = settings.ENABLE_MONGODB_SEARCH
+        
+        if use_db_mode:
+            logging.info("DB 연동 모드로 LLM 서비스를 초기화합니다.")
+            _llm_service = LLMService(use_db_mode=True, use_llama_cpp=False, use_finetuned=False)
+            
+            # DB 서비스 주입
+            db = await get_database()
+            search_service = MongoDBSearchService(db)
+            _llm_service.inject_db_service(search_service)
+        else:
+            logging.info("순수 LLM 모드로 LLM 서비스를 초기화합니다.")
+            _llm_service = LLMService(use_db_mode=False, use_llama_cpp=False, use_finetuned=False)
         
         logging.info("LLM 서비스 인스턴스 생성 완료")
     return _llm_service
@@ -38,8 +66,7 @@ async def get_chat_service() -> ChatService:
     global _chat_service
     if _chat_service is None:
         db = await get_database()
-        llm_service = await get_llm_service()
-        _chat_service = ChatService(db, llm_service)
+        _chat_service = ChatService(db)
         logging.info("채팅 서비스 인스턴스 생성 완료")
     return _chat_service
 

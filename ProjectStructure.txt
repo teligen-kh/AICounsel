@@ -37,6 +37,7 @@ backend/
 │       ├── chat_service.py    # 채팅 서비스
 │       ├── conversation_algorithm.py
 │       ├── formatting_service.py
+│       ├── input_filter.py    # 입력 분류 (DB 연동)
 │       ├── llm_service.py     # LLM 서비스
 │       ├── llm.py
 │       ├── model_manager.py   # 모델 관리
@@ -229,4 +230,15 @@ python run_model_test.py --model_path [모델경로] --test_type interactive
 1. **데이터 업로드**: 클라우드 스토리지
 2. **클라우드 파인튜닝**: AWS/GCP/Azure GPU
 3. **모델 다운로드**: 로컬로 다운로드
-4. **테스트 및 적용**: 기존과 동일 
+4. **테스트 및 적용**: 기존과 동일
+
+## 🆕 최근 개선사항 (2024년)
+
+### 입력 분류 시스템 개선
+- **context_patterns 테이블 연동**: MongoDB의 context_patterns 테이블을 사용한 정확한 패턴 매칭
+- **욕설 패턴 수정**: "빡" 등 일반 단어가 욕설로 분류되는 문제 해결
+- **LLM 응답 길이 증가**: max_new_tokens 300 → 500으로 증가하여 완전한 응답 보장
+- **DB 답변 길이 제한 제거**: 완전한 답변 보장
+
+### 테스트 파일 추가
+- **test_input_filter_with_context_patterns.py**: 입력 분류 및 knowledge_base 검색 통합 테스트 

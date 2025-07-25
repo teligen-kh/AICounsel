@@ -90,6 +90,9 @@ app.include_router(auth.router, prefix="/api/v1")
 # 키워드 관리 API 추가
 from .api.v1 import keywords
 app.include_router(keywords.router, prefix="/api/v1")
+# 문맥 관리 API 추가
+from .api.v1 import context
+app.include_router(context.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():

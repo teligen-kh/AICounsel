@@ -14,7 +14,9 @@ class InputType(Enum):
 class InputFilter:
     """사용자 입력 필터링 및 분류"""
     
-    def __init__(self):
+    def __init__(self, db=None):
+        self.db = db
+        self.pattern_collection = db.context_patterns if db else None
         self._initialize_patterns()
     
     def _initialize_patterns(self):
@@ -29,7 +31,9 @@ class InputFilter:
         self.casual_patterns = [
             r'바쁘시죠', r'식사', r'점심', r'저녁', r'아침', r'커피', r'차',
             r'날씨', r'기분', r'피곤', r'힘드시', r'어떻게 지내', r'잘 지내',
-            r'너는', r'당신은', r'ai', r'인공지능', r'로봇'
+            r'너는', r'당신은', r'ai', r'인공지능', r'로봇',
+            r'상담사', r'상담사연결', r'상담사 연결', r'상담사와', r'상담사와 연결',
+            r'사람과', r'사람과 대화', r'사람과 연결', r'연결해줘', r'연결해 주세요'
         ]
         
         # 기술적 질문 패턴
@@ -37,7 +41,7 @@ class InputFilter:
             r'설치', r'설정', r'오류', r'에러', r'문제', r'해결', r'방법',
             r'프로그램', r'소프트웨어', r'하드웨어', r'기기', r'장비',
             r'스캐너', r'프린터', r'포스', r'pos', r'시스템', r'네트워크',
-            r'연결', r'인터넷', r'데이터', r'백업', r'복구', r'업데이트',
+            r'연결오류', r'연결 오류', r'재연결', r'재 연결', r'인터넷', r'데이터', r'백업', r'복구', r'업데이트',
             # 추가된 전문 키워드들 (DB에 있는 실제 데이터 기반)
             r'영수증', r'영수증프린터', r'영수증 프린터', r'영수증출력', r'영수증 출력',
             r'키오스크', r'kiosk', r'키오스크설치', r'키오스크 설치',
@@ -77,10 +81,10 @@ class InputFilter:
             r'취미', r'관심사', r'좋아하는', r'싫어하는', r'선호', r'취향'
         ]
         
-        # 욕설 패턴
+        # 욕설 패턴 (더 구체적으로 수정)
         self.profanity_patterns = [
             r'바보', r'멍청', r'똥', r'개', r'새끼', r'씨발', r'병신',
-            r'미친', r'미쳤', r'돌았', r'정신', r'빡', r'빡치', r'열받',
+            r'미친', r'미쳤', r'돌았', r'정신', r'빡치', r'열받',
             r'짜증', r'화나', r'열받', r'빡돌', r'돌았', r'미쳤',
             r'fuck', r'shit', r'damn', r'bitch', r'ass', r'idiot', r'stupid'
         ]
@@ -95,6 +99,12 @@ class InputFilter:
                 "reason": "욕설 감지",
                 "matched_words": self._find_matched_words(input_lower, self.profanity_patterns)
             }
+        
+        # context_patterns에서 매칭 검색 (DB가 있는 경우)
+        if self.pattern_collection:
+            context_result = self._check_context_patterns_sync(input_lower)
+            if context_result:
+                return context_result
         
         # 비상담 질문 체크
         if self._is_non_counseling(input_lower):
@@ -154,6 +164,93 @@ class InputFilter:
             if re.search(pattern, text):
                 matched.append(pattern)
         return matched
+    
+    def _check_context_patterns_sync(self, user_input: str) -> Optional[Tuple[InputType, Dict[str, any]]]:
+        """context_patterns 테이블에서 패턴 매칭 (동기 버전)"""
+        try:
+            import asyncio
+            
+            # 비동기 함수를 동기적으로 실행
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(self._check_context_patterns_async(user_input))
+                return result
+            finally:
+                loop.close()
+                
+        except Exception as e:
+            print(f"context_patterns 검색 중 오류: {e}")
+            return None
+    
+    async def _check_context_patterns_async(self, user_input: str) -> Optional[Tuple[InputType, Dict[str, any]]]:
+        """context_patterns 테이블에서 패턴 매칭 (비동기 버전)"""
+        try:
+            # 1. 정확한 매칭 시도
+            exact_match = await self.pattern_collection.find_one({
+                "pattern": user_input
+            })
+            
+            if exact_match:
+                context_type = exact_match.get("context", "unknown")
+                return self._map_context_to_input_type(context_type), {
+                    "reason": f"정확한 패턴 매칭: {exact_match['pattern']}",
+                    "pattern": exact_match['pattern'],
+                    "context": context_type
+                }
+            
+            # 2. 부분 매칭 시도 (패턴이 사용자 입력에 포함되는 경우)
+            partial_matches = await self.pattern_collection.find({
+                "$expr": {
+                    "$regexMatch": {
+                        "input": user_input,
+                        "regex": "$pattern",
+                        "options": "i"
+                    }
+                }
+            }).to_list(length=10)
+            
+            if partial_matches:
+                # 가장 긴 패턴을 우선 선택 (더 구체적)
+                best_match = max(partial_matches, key=lambda x: len(x.get("pattern", "")))
+                context_type = best_match.get("context", "unknown")
+                return self._map_context_to_input_type(context_type), {
+                    "reason": f"부분 패턴 매칭: {best_match['pattern']}",
+                    "pattern": best_match['pattern'],
+                    "context": context_type,
+                    "all_matches": [m.get("pattern") for m in partial_matches]
+                }
+            
+            # 3. 사용자 입력이 패턴에 포함되는 경우
+            contained_matches = await self.pattern_collection.find({
+                "pattern": {"$regex": user_input, "$options": "i"}
+            }).to_list(length=10)
+            
+            if contained_matches:
+                best_match = max(contained_matches, key=lambda x: len(x.get("pattern", "")))
+                context_type = best_match.get("context", "unknown")
+                return self._map_context_to_input_type(context_type), {
+                    "reason": f"포함 패턴 매칭: {best_match['pattern']}",
+                    "pattern": best_match['pattern'],
+                    "context": context_type,
+                    "all_matches": [m.get("pattern") for m in contained_matches]
+                }
+            
+            return None
+            
+        except Exception as e:
+            print(f"context_patterns 검색 중 오류: {e}")
+            return None
+    
+    def _map_context_to_input_type(self, context: str) -> InputType:
+        """context 문자열을 InputType으로 매핑"""
+        context_mapping = {
+            "casual": InputType.CASUAL,
+            "technical": InputType.TECHNICAL,
+            "non_counseling": InputType.NON_COUNSELING,
+            "profanity": InputType.PROFANITY
+        }
+        return context_mapping.get(context, InputType.UNKNOWN)
     
     def get_response_template(self, input_type: InputType, company_name: str = "텔리젠") -> str:
         """입력 타입에 따른 응답 템플릿 반환"""

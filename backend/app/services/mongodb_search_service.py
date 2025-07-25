@@ -12,96 +12,238 @@ class MongoDBSearchService:
         
     async def search_answer(self, query: str) -> Optional[str]:
         """
-        쿼리와 가장 관련성 높은 답변을 검색합니다.
+        사용자 질문에 대한 답변을 검색합니다.
         
         Args:
-            query: 검색 쿼리
+            query: 사용자 질문
             
         Returns:
-            가장 관련성 높은 답변 또는 None
+            Optional[str]: 찾은 답변 또는 None
         """
+        logging.info(f"🔍 MongoDB 검색 시작: {query[:50]}...")
+        
         try:
-            import time
-            total_start = time.time()
-            
-            # 1. 정확한 매치 검색
-            exact_start = time.time()
+            # 1. 정확한 매치 검색 (부분 매치 우선)
+            logging.info("🔍 1단계: 정확한 매치 검색")
             exact_match = await self._search_exact_match(query)
-            exact_time = (time.time() - exact_start) * 1000
-            logging.info(f"정확한 매치 검색 시간: {exact_time:.2f}ms")
-            
             if exact_match:
-                logging.info(f"Exact match found for query: {query[:50]}...")
-                total_time = (time.time() - total_start) * 1000
-                logging.info(f"총 검색 시간: {total_time:.2f}ms")
+                logging.info("✅ 정확한 매치에서 답변 찾음")
                 return exact_match
             
             # 2. 키워드 기반 검색
-            logging.info("No exact matches found, using improved keyword search")
-            keyword_start = time.time()
+            logging.info("🔍 2단계: 키워드 기반 검색")
             keywords = self._extract_keywords(query)
-            keyword_extract_time = (time.time() - keyword_start) * 1000
-            logging.info(f"키워드 추출 시간: {keyword_extract_time:.2f}ms")
-            logging.info(f"Extracted keywords: {keywords}")
+            if keywords:
+                logging.info(f"🔍 추출된 키워드: {keywords}")
+                keyword_match = await self._search_by_keywords(keywords)
+                if keyword_match:
+                    logging.info("✅ 키워드 검색에서 답변 찾음")
+                    return keyword_match
             
-            keyword_search_start = time.time()
-            keyword_match = await self._search_by_keywords(keywords)
-            keyword_search_time = (time.time() - keyword_search_start) * 1000
-            logging.info(f"키워드 검색 시간: {keyword_search_time:.2f}ms")
-            
-            if keyword_match:
-                logging.info(f"Keyword match found for query: {query[:50]}...")
-                total_time = (time.time() - total_start) * 1000
-                logging.info(f"총 검색 시간: {total_time:.2f}ms")
-                return keyword_match
-            
-            # 3. 유사도 검색
-            similarity_start = time.time()
+            # 3. 유사도 기반 검색
+            logging.info("🔍 3단계: 유사도 기반 검색")
             similarity_match = await self._search_by_similarity(query)
-            similarity_time = (time.time() - similarity_start) * 1000
-            logging.info(f"유사도 검색 시간: {similarity_time:.2f}ms")
-            
             if similarity_match:
-                logging.info(f"Similarity match found for query: {query[:50]}...")
-                total_time = (time.time() - total_start) * 1000
-                logging.info(f"총 검색 시간: {total_time:.2f}ms")
+                logging.info("✅ 유사도 검색에서 답변 찾음")
                 return similarity_match
             
-            # 4. DB에 답변이 없을 때 상담사 연락 안내
-            logging.info(f"No relevant answer found for query: {query[:50]}...")
-            total_time = (time.time() - total_start) * 1000
-            logging.info(f"총 검색 시간: {total_time:.2f}ms")
-            return self._get_consultant_contact_response(query)
+            logging.info("❌ 모든 검색 방법에서 답변을 찾지 못함")
+            return None
             
         except Exception as e:
-            logging.error(f"Error in search_answer: {str(e)}")
-            return self._get_consultant_contact_response(query)
+            logging.error(f"❌ 검색 중 오류 발생: {str(e)}")
+            return None
     
     async def _search_exact_match(self, query: str) -> Optional[str]:
-        """정확한 매치를 검색합니다."""
+        """스마트 검색: 부분 매치 → 키워드 기반 → 유사도 순"""
         try:
             # 정규화된 쿼리
             normalized_query = self._normalize_text(query)
             
-            # 정확한 매치 검색
-            pipeline = [
-                {
-                    "$match": {
-                        "$or": [
-                            {"question": {"$regex": normalized_query, "$options": "i"}},
-                            {"keywords": {"$in": [normalized_query]}}
-                        ]
-                    }
-                },
-                {"$limit": 1}
-            ]
+            # 1. 부분 매치 검색 (현재: question 그대로 사용)
+            partial_match = await self.knowledge_collection.find_one({
+                "question": {"$regex": normalized_query, "$options": "i"}
+            })
             
-            result = await self.knowledge_collection.aggregate(pipeline).to_list(1)
-            return result[0]['answer'] if result else None
+            if partial_match:
+                logging.info(f"Partial match found: {partial_match['question']}")
+                return partial_match['answer']
+            
+            # 2. 키워드 기반 검색 (미래: question 꼬인 형태 대응)
+            keywords = self._extract_keywords(query)
+            if keywords:
+                # AND 조건: 모든 키워드가 포함된 답변
+                and_match = await self._search_by_keywords_and(keywords)
+                if and_match:
+                    logging.info(f"AND keyword match found: {and_match['question']}")
+                    return and_match['answer']
+                
+                # OR 조건: 주요 키워드가 포함된 답변
+                or_match = await self._search_by_keywords_or(keywords)
+                if or_match:
+                    logging.info(f"OR keyword match found: {or_match['question']}")
+                    return or_match['answer']
+            
+            return None
             
         except Exception as e:
-            logging.error(f"Error in exact match search: {str(e)}")
+            logging.error(f"Error in smart search: {str(e)}")
             return None
+
+    async def _search_by_keywords_and(self, keywords: List[str]) -> Optional[Dict]:
+        """모든 키워드가 포함된 답변 검색 (AND 조건)"""
+        try:
+            # 핵심 키워드만 선택 (상위 3개)
+            core_keywords = keywords[:3]
+            
+            # 모든 키워드가 포함된 질문 찾기
+            for keyword in core_keywords:
+                result = await self.knowledge_collection.find_one({
+                    "question": {"$regex": keyword, "$options": "i"}
+                })
+                if not result:
+                    return None  # 하나라도 없으면 실패
+            
+            # 모든 키워드가 포함된 질문 중 가장 관련성 높은 것 선택
+            best_match = None
+            best_score = 0
+            
+            for keyword in core_keywords:
+                results = await self.knowledge_collection.find({
+                    "question": {"$regex": keyword, "$options": "i"}
+                }).to_list(length=10)
+                
+                for result in results:
+                    score = self._calculate_keyword_score(result, core_keywords)
+                    if score > best_score:
+                        best_score = score
+                        best_match = result
+            
+            return best_match if best_score > 5.0 else None
+            
+        except Exception as e:
+            logging.error(f"Error in AND keyword search: {str(e)}")
+            return None
+
+    async def _search_by_keywords_or(self, keywords: List[str]) -> Optional[Dict]:
+        """주요 키워드가 포함된 답변 검색 (OR 조건)"""
+        try:
+            # 핵심 키워드만 선택 (상위 2개)
+            core_keywords = keywords[:2]
+            
+            best_match = None
+            best_score = 0
+            
+            # 각 키워드별로 검색
+            for keyword in core_keywords:
+                results = await self.knowledge_collection.find({
+                    "question": {"$regex": keyword, "$options": "i"}
+                }).to_list(length=5)
+                
+                for result in results:
+                    score = self._calculate_keyword_score(result, core_keywords)
+                    if score > best_score:
+                        best_score = score
+                        best_match = result
+            
+            return best_match if best_score > 3.0 else None
+            
+        except Exception as e:
+            logging.error(f"Error in OR keyword search: {str(e)}")
+            return None
+
+    def _calculate_keyword_score(self, item: Dict, keywords: List[str]) -> float:
+        """키워드 매칭 점수를 계산합니다."""
+        score = 0.0
+        question = item.get('question', '').lower()
+        answer = item.get('answer', '').lower()
+        
+        # 핵심 키워드 가중치 (포인트 관련 추가)
+        priority_keywords = {
+            '포인트': 8.0,
+            '적립': 8.0,
+            '포인트적립': 10.0,
+            '포인트 적립': 10.0,
+            '포스': 5.0,
+            'POS': 5.0,
+            '프로그램': 4.0,
+            '설치': 4.0,
+            '재설치': 6.0,
+            '데이터': 4.0,
+            '백업': 5.0,
+            '복원': 4.0,
+            '키오스크': 5.0,
+            '터치': 3.0,
+            '프린터': 5.0,
+            '인쇄': 4.0,
+            '출력': 3.0,
+            '오류': 3.0,
+            '에러': 3.0,
+            '문제': 2.0,
+            '연결': 3.0,
+            '설정': 3.0,
+            '네트워크': 4.0,
+            '와이파이': 4.0,
+            'WiFi': 4.0,
+            '결제': 4.0,
+            '환불': 4.0,
+            '취소': 3.0,
+            'DB': 6.0,
+            '데이터베이스': 6.0,
+            '공간': 4.0,
+            '늘리기': 5.0,
+            '늘리': 5.0,
+            'ARUMLOCADB': 8.0,
+            'TABLE': 4.0,
+            '견적서': 6.0,
+            '참조사항': 6.0,
+            '참고사항': 6.0,
+            '메모': 4.0
+        }
+        
+        # 개별 키워드 점수
+        for keyword in keywords:
+            weight = priority_keywords.get(keyword, 1.0)
+            
+            # 질문에 키워드가 있으면 높은 점수
+            if keyword in question:
+                score += 5.0 * weight  # 3.0 -> 5.0으로 증가
+            # 답변에 키워드가 있으면 중간 점수
+            if keyword in answer:
+                score += 2.0 * weight  # 1.0 -> 2.0으로 증가
+        
+        # 연속된 키워드 매칭에 추가 점수
+        for i in range(len(keywords) - 1):
+            phrase = f"{keywords[i]} {keywords[i+1]}"
+            if phrase in question:
+                score += 8.0  # 4.0 -> 8.0으로 증가
+            if phrase in answer:
+                score += 4.0  # 2.0 -> 4.0으로 증가
+        
+        # 특정 조합에 높은 점수 (포인트 관련 추가)
+        combinations = [
+            ('포스', '포인트'),
+            ('포인트', '적립'),
+            ('포인트', '설정'),
+            ('포스', '재설치'),
+            ('POS', '재설치'),
+            ('프로그램', '재설치'),
+            ('데이터', '백업'),
+            ('키오스크', '터치'),
+            ('프린터', '오류'),
+            ('DB', '늘리기'),
+            ('데이터베이스', '늘리기'),
+            ('견적서', '참조사항'),
+            ('견적서', '참고사항')
+        ]
+        
+        for combo in combinations:
+            if combo[0] in question and combo[1] in question:
+                score += 12.0  # 8.0 -> 12.0으로 증가
+            if combo[0] in answer and combo[1] in answer:
+                score += 6.0   # 4.0 -> 6.0으로 증가
+        
+        return score
 
     async def _search_by_keywords(self, keywords: List[str]) -> Optional[str]:
         """키워드 기반 검색을 수행합니다."""
@@ -130,8 +272,8 @@ class MongoDBSearchService:
             score_time = (time.time() - score_start) * 1000
             logging.info(f"점수 계산 시간: {score_time:.2f}ms (항목당 평균: {score_time/len(all_items):.3f}ms)")
             
-            # 점수가 충분히 높은 경우만 반환 (임계값을 낮춤)
-            if best_score >= 1.5:  # 2.0에서 1.5로 낮춤
+            # 점수가 충분히 높은 경우만 반환 (임계값을 더 낮춤)
+            if best_score >= 1.0:  # 1.5에서 1.0으로 낮춤
                 logging.info(f"Keyword match found with score {best_score}: {best_match.get('question', '')[:50]}...")
                 return best_match['answer']
             
@@ -140,86 +282,6 @@ class MongoDBSearchService:
         except Exception as e:
             logging.error(f"Error in keyword search: {str(e)}")
             return None
-
-    def _calculate_keyword_score(self, item: Dict, keywords: List[str]) -> float:
-        """키워드 매칭 점수를 계산합니다."""
-        score = 0.0
-        question = item.get('question', '').lower()
-        answer = item.get('answer', '').lower()
-        
-        # 핵심 키워드 가중치
-        priority_keywords = {
-            '포스': 5.0,
-            'POS': 5.0,
-            '프로그램': 4.0,
-            '설치': 4.0,
-            '재설치': 6.0,  # 재설치가 더 구체적이므로 높은 가중치
-            '데이터': 4.0,
-            '백업': 5.0,
-            '복원': 4.0,
-            '키오스크': 5.0,
-            '터치': 3.0,
-            '프린터': 5.0,
-            '인쇄': 4.0,
-            '출력': 3.0,
-            '오류': 3.0,
-            '에러': 3.0,
-            '문제': 2.0,
-            '연결': 3.0,
-            '설정': 3.0,
-            '네트워크': 4.0,
-            '와이파이': 4.0,
-            'WiFi': 4.0,
-            '결제': 4.0,
-            '환불': 4.0,
-            '취소': 3.0,
-            'DB': 6.0,
-            '데이터베이스': 6.0,
-            '공간': 4.0,
-            '늘리기': 5.0,
-            '늘리': 5.0,
-            'ARUMLOCADB': 8.0,
-            'TABLE': 4.0
-        }
-        
-        # 개별 키워드 점수
-        for keyword in keywords:
-            weight = priority_keywords.get(keyword, 1.0)
-            
-            # 질문에 키워드가 있으면 높은 점수
-            if keyword in question:
-                score += 3.0 * weight
-            # 답변에 키워드가 있으면 중간 점수
-            if keyword in answer:
-                score += 1.0 * weight
-        
-        # 연속된 키워드 매칭에 추가 점수
-        for i in range(len(keywords) - 1):
-            phrase = f"{keywords[i]} {keywords[i+1]}"
-            if phrase in question:
-                score += 4.0
-            if phrase in answer:
-                score += 2.0
-        
-        # 특정 조합에 높은 점수
-        combinations = [
-            ('포스', '재설치'),
-            ('POS', '재설치'),
-            ('프로그램', '재설치'),
-            ('데이터', '백업'),
-            ('키오스크', '터치'),
-            ('프린터', '오류'),
-            ('DB', '늘리기'),
-            ('데이터베이스', '늘리기')
-        ]
-        
-        for combo in combinations:
-            if combo[0] in question and combo[1] in question:
-                score += 8.0
-            if combo[0] in answer and combo[1] in answer:
-                score += 4.0
-        
-        return score
 
     async def _search_by_similarity(self, query: str) -> Optional[str]:
         """유사도 기반 검색을 수행합니다."""
@@ -453,14 +515,18 @@ class MongoDBSearchService:
             return []
 
     def _normalize_text(self, text: str) -> str:
-        """텍스트를 정규화합니다."""
+        """텍스트 정규화 (간단하게)"""
         try:
-            # 특수문자 제거 및 소문자 변환
-            text = re.sub(r'[^\w\s가-힣]', ' ', text)
-            return text.strip()
+            # 기본 정리만
+            normalized = text.strip()
+            
+            # 연속된 공백을 하나로
+            normalized = re.sub(r'\s+', ' ', normalized)
+            
+            return normalized
             
         except Exception as e:
-            logging.error(f"Error normalizing text: {str(e)}")
+            logging.error(f"Error in text normalization: {str(e)}")
             return text
     
     def _score_relevance(self, query: str, answers: List[Dict]) -> List[Dict]:

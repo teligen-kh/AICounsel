@@ -181,20 +181,15 @@ class ConversationAlgorithm:
         # AI/사람 관련 질문 응답
         if any(word in message_lower for word in ['ai', '사람', '인간', '봇', '봇이', '봇인', '봇이야', '봇이에요']):
             responses = [
-                "안녕하세요! 저는 AI 상담사입니다. 알파문구 포스 시스템과 관련된 질문에 답변해드릴 수 있어요. 어떤 도움이 필요하신가요?",
+                "안녕하세요! 저는 AI 상담사입니다. 포스 시스템과 관련된 질문에 답변해드릴 수 있어요.",
                 "안녕하세요! 저는 AI 상담사입니다. 포스 시스템 사용 중 궁금한 점이나 문제가 있으시면 언제든 말씀해 주세요.",
-                "안녕하세요! 저는 AI 상담사입니다. 알파문구 포스 프로그램과 관련된 상담을 도와드리고 있어요. 무엇을 도와드릴까요?"
+                "안녕하세요! 저는 AI 상담사입니다. 포스 프로그램과 관련된 상담을 도와드리고 있어요."
             ]
             return random.choice(responses)
         
-        # 인사 응답
+        # 인사 응답 (간결하게)
         if any(word in message_lower for word in ['안녕', '하이', '반갑']):
-            responses = [
-                "안녕하세요! 반갑습니다. 어떻게 도와드릴까요?",
-                "안녕하세요! 어떤 도움이 필요하신가요?",
-                "안녕하세요! 궁금한 점이 있으시면 언제든 말씀해 주세요."
-            ]
-            return random.choice(responses)
+            return "안녕하세요! 어떻게 도와드릴까요?"
         
         # 감사 응답
         if any(word in message_lower for word in ['감사', '고맙', '고마워']):
@@ -214,10 +209,10 @@ class ConversationAlgorithm:
             ]
             return random.choice(responses)
         
-        # 기본 응답
+        # 기본 응답 (간결하게)
         responses = [
-            "무엇을 도와드릴까요?",
             "어떤 도움이 필요하신가요?",
+            "무엇을 도와드릴까요?",
             "궁금한 점이 있으시면 언제든 말씀해 주세요."
         ]
         return random.choice(responses)

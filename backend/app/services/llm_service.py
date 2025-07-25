@@ -387,16 +387,15 @@ class LLMService:
             # 토크나이징
             inputs = self.tokenizer(formatted_prompt, return_tensors="pt")
             
-            # Hugging Face 최적화 파라미터 사용 (가이드 권장값)
+            # 원래 잘 되던 설정으로 복원
             with torch.no_grad():
                 outputs = self.model.generate(
                     inputs.input_ids,
-                    max_new_tokens=75,         # 2문장 보장 (1024 -> 75)
-                    temperature=0.3,           # 일관성 유지 (0.7 -> 0.3)
-                    top_p=0.8,                 # 관련성 강화 (0.9 -> 0.8)
-                    top_k=30,                  # 간결함 유지 (새로 추가)
+                    max_new_tokens=30,         # 75 -> 30으로 복원 (간결한 응답)
+                    temperature=0.7,           # 0.3 -> 0.7로 복원 (자연스러움)
+                    top_p=0.9,                 # 0.8 -> 0.9로 복원
                     do_sample=True,            # 샘플링 활성화
-                    repetition_penalty=1.2,    # 반복 최소화 (1.1 -> 1.2)
+                    repetition_penalty=1.1,    # 1.2 -> 1.1로 복원
                     pad_token_id=self.tokenizer.eos_token_id,
                     eos_token_id=self.tokenizer.eos_token_id
                 )
@@ -419,11 +418,15 @@ class LLMService:
             assistant_response = assistant_response.replace("<|im_end|>", "").replace("<|im_start|>", "")
             assistant_response = assistant_response.replace("<|endoftext|>", "")
             
+            # 인사말 간결화
+            if any(word in message.lower() for word in ['안녕', '하이', '반갑']):
+                return "안녕하세요! 어떻게 도와드릴까요?"
+            
             if assistant_response:
                 self.response_stats['llama_responses'] += 1
                 return assistant_response
             else:
-                return "죄송합니다. 적절한 응답을 생성하지 못했습니다."
+                return "어떤 도움이 필요하신가요?"
                 
         except Exception as e:
             logging.error(f"원본 Llama 일상 대화 처리 오류: {str(e)}")
@@ -439,12 +442,15 @@ class LLMService:
         Returns:
             str: 강화된 답변
         """
+        logging.info(f"🔍 search_and_enhance_answer 시작: {message[:50]}...")
+        
         if not self.search_service:
-            logging.warning("Search service not available")
+            logging.warning("❌ Search service not available")
             return await self.get_conversation_response(message)
         
         try:
             # 1. DB에서 관련 답변 검색
+            logging.info("🔍 DB 검색 시작")
             db_start_time = time.time()
             db_answer = await self.search_service.search_answer(message)
             db_end_time = time.time()
@@ -454,18 +460,21 @@ class LLMService:
             
             if db_answer:
                 self.response_stats['db_responses'] += 1
-                logging.info(f"DB에서 답변 찾음: {db_answer[:100]}...")
+                logging.info(f"✅ DB에서 답변 찾음: {db_answer[:100]}...")
                 
                 # 2. LLM으로 답변 강화
+                logging.info("🔍 LLM으로 답변 강화 시작")
                 enhanced_answer = await self._enhance_db_answer_with_llm(message, db_answer)
+                logging.info(f"✅ LLM 강화 완료: {enhanced_answer[:100]}...")
                 return enhanced_answer
             else:
-                logging.info("DB에서 관련 답변을 찾지 못함")
+                logging.info("❌ DB에서 관련 답변을 찾지 못함")
                 # DB에서 답변을 찾지 못한 경우 일반 대화로 처리
+                logging.info("🔍 일반 대화로 폴백")
                 return await self.get_conversation_response(message)
                 
         except Exception as e:
-            logging.error(f"DB 검색 및 강화 중 오류: {str(e)}")
+            logging.error(f"❌ DB 검색 및 강화 중 오류: {str(e)}")
             # 오류 발생 시 일반 대화로 폴백
             return await self.get_conversation_response(message)
 
@@ -496,31 +505,32 @@ class LLMService:
     async def _enhance_db_answer_with_llm(self, message: str, db_answer: str) -> str:
         """DB 답변을 원본 Llama-3.1-8B-Instruct 모델로 강화"""
         try:
-            # LLaMA 형식 프롬프트
+            # LLaMA 형식 프롬프트 (더 간결하고 정확하게)
             formatted_prompt = f"""<|im_start|>user
 사용자 질문: {message}
 
 DB 답변: {db_answer}
 
-위 답변을 친절하고 이해하기 쉽게 정리해주세요.<|im_end|>
+위 DB 답변을 바탕으로 간결하고 정확한 해결 방법을 알려주세요. DB 답변의 핵심 내용을 유지하면서 친절하게 설명해주세요. 불필요한 확장은 하지 마세요.<|im_end|>
 <|im_start|>assistant
 """
             
             # 토크나이징
             inputs = self.tokenizer(formatted_prompt, return_tensors="pt")
             
-            # 생성 (빠른 응답을 위해 토큰 수 제한)
+            # 안정적인 응답을 위한 설정
             with torch.no_grad():
                 outputs = self.model.generate(
                     inputs.input_ids,
-                    max_new_tokens=75,         # 200 -> 75로 줄임 (빠른 응답)
-                    temperature=0.3,           # 0.7 -> 0.3으로 줄임 (일관성)
-                    top_p=0.8,                 # 관련성 강화
-                    top_k=30,                  # 간결함 유지
+                    max_new_tokens=500,         # 300 -> 500으로 증가 (완전한 답변 보장)
+                    temperature=0.7,           # 자연스러움 유지
+                    top_p=0.9,                 # 안정성
                     do_sample=True,
-                    repetition_penalty=1.2,    # 반복 최소화
+                    repetition_penalty=1.1,    # 반복 방지
                     pad_token_id=self.tokenizer.eos_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    early_stopping=True,       # 조기 종료 활성화
+                    num_beams=1               # 단일 빔으로 속도 향상
                 )
             
             # 응답 디코딩
@@ -532,8 +542,20 @@ DB 답변: {db_answer}
             else:
                 assistant_response = response.replace(formatted_prompt, "").strip()
             
-            # LLaMA 특수 토큰 제거
+            # LLaMA 특수 토큰 제거 (더 철저하게)
             assistant_response = assistant_response.replace("<|im_end|>", "").replace("<|im_start|>", "")
+            assistant_response = assistant_response.replace("<|fim_end|>", "").replace("<|fim_start|>", "")
+            assistant_response = assistant_response.replace("<|endoftext|>", "").replace("<|eom_complete|>", "")
+            
+            # 이상한 토큰 패턴 제거
+            import re
+            assistant_response = re.sub(r'\|<\|[^>]+\|>', '', assistant_response)
+            assistant_response = re.sub(r'<\|[^>]+\|>', '', assistant_response)
+            
+            # 응답이 너무 짧으면 DB 답변 그대로 반환
+            if len(assistant_response.strip()) < 20:
+                logging.warning("LLM 응답이 너무 짧음, DB 답변 사용")
+                return self._format_db_answer(db_answer)
             
             if assistant_response:
                 self.response_stats['llama_responses'] += 1
@@ -575,9 +597,9 @@ DB 답변: {db_answer}
             # 앞뒤 공백 제거
             formatted = formatted.strip()
             
-            # 길이 제한 (더 짧게)
-            if len(formatted) > 500:
-                formatted = formatted[:500] + "..."
+            # 길이 제한 제거 - 완전한 답변 보장
+            # if len(formatted) > 1000:
+            #     formatted = formatted[:1000] + "..."
             
             return formatted
             

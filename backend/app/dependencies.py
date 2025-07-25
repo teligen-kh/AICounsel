@@ -10,6 +10,7 @@ from .services.chat_service import ChatService
 from .services.mongodb_search_service import MongoDBSearchService
 from .services.conversation_algorithm import ConversationAlgorithm
 from .services.formatting_service import FormattingService
+from .services.input_filter import InputFilter
 from .services.model_manager import get_model_manager, ModelType
 import logging
 from typing import Optional
@@ -21,6 +22,7 @@ _chat_service: Optional[ChatService] = None                  # 채팅 서비스 
 _search_service: Optional[MongoDBSearchService] = None       # MongoDB 검색 서비스 인스턴스
 _conversation_algorithm: Optional[ConversationAlgorithm] = None  # 고객 응대 알고리즘 인스턴스
 _formatting_service: Optional[FormattingService] = None      # 포맷팅 서비스 인스턴스
+_input_filter: Optional[InputFilter] = None                  # 입력 필터 인스턴스
 
 def _should_use_llama_cpp() -> bool:
     """
@@ -95,14 +97,24 @@ def get_formatting_service() -> FormattingService:
         logging.info("포맷팅 서비스 인스턴스 생성 완료")
     return _formatting_service
 
+async def get_input_filter() -> InputFilter:
+    """입력 필터 인스턴스를 반환합니다."""
+    global _input_filter
+    if _input_filter is None:
+        db = await get_database()
+        _input_filter = InputFilter(db)
+        logging.info("입력 필터 인스턴스 생성 완료 (DB 연동)")
+    return _input_filter
+
 def reset_services():
     """모든 서비스 인스턴스를 초기화합니다."""
-    global _llm_service, _chat_service, _search_service, _conversation_algorithm, _formatting_service
+    global _llm_service, _chat_service, _search_service, _conversation_algorithm, _formatting_service, _input_filter
     _llm_service = None
     _chat_service = None
     _search_service = None
     _conversation_algorithm = None
     _formatting_service = None
+    _input_filter = None
     logging.info("모든 서비스 인스턴스 초기화 완료")
 
 def get_model_manager():
@@ -150,4 +162,8 @@ async def get_conversation_algorithm_dependency() -> ConversationAlgorithm:
 
 async def get_formatting_service_dependency() -> FormattingService:
     """포맷팅 서비스 의존성을 반환합니다."""
-    return get_formatting_service() 
+    return get_formatting_service()
+
+async def get_input_filter_dependency() -> InputFilter:
+    """입력 필터 의존성을 반환합니다."""
+    return await get_input_filter()

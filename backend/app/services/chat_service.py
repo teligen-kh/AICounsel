@@ -4,7 +4,7 @@ from .db_enhancement_service import DBEnhancementService
 from .conversation_algorithm import ConversationAlgorithm
 from .formatting_service import FormattingService
 from .model_manager import get_model_manager, ModelType
-from .input_filter import get_input_filter, InputType
+from .input_filter import InputFilter, InputType as InputFilterType
 from ..config import settings, enable_module, disable_module, get_module_status
 import logging
 import time
@@ -39,20 +39,17 @@ class ChatService:
         
         # 입력 필터 (설정에 따라 선택)
         if settings.ENABLE_CONTEXT_AWARE_CLASSIFICATION:
-            from .context_aware_classifier import ContextAwareClassifier
+            from .context_aware_classifier import ContextAwareClassifier, InputType
             self.input_filter = ContextAwareClassifier(db)
-            # LLM 서비스 주입
-            from ..dependencies import get_llm_service
-            import asyncio
-            try:
-                llm_service = asyncio.run(get_llm_service())
-                self.input_filter.inject_llm_service(llm_service)
-            except:
-                pass  # LLM 서비스가 아직 초기화되지 않은 경우
+            # LLM 서비스 주입 (나중에 주입)
+            self.input_filter.inject_llm_service(None)  # 초기화 시에는 None으로 설정
+            self.InputType = InputType  # context_aware_classifier의 InputType 사용
             logging.info("✅ 문맥 인식 분류기 활성화")
         else:
-            self.input_filter = get_input_filter()
-            logging.info("✅ 기존 키워드 분류기 사용")
+            # DB 연동된 InputFilter 사용
+            self.input_filter = InputFilter(db)
+            self.InputType = InputFilterType  # input_filter의 InputType 사용
+            logging.info("✅ DB 연동 키워드 분류기 사용")
         
         # 자동화 서비스 추가
         from .automation_service import AutomationService
@@ -200,22 +197,26 @@ class ChatService:
             logging.info(f"메시지 처리 시작: {message[:20]}...")
             
             # 1. 입력 분류
-            input_type, details = self.input_filter.classify_input(message)
+            input_type, details = await self.input_filter.classify_input(message)
             logging.info(f"입력 분류: {input_type.value} - {details.get('reason', '')}")
             
             # 2. 분류에 따른 응답 생성
-            if input_type in [InputType.PROFANITY, InputType.NON_COUNSELING]:
+            if input_type in [self.InputType.PROFANITY, self.InputType.NON_COUNSELING]:
                 # 템플릿 응답 사용
                 response = self.input_filter.get_response_template(input_type)
                 logging.info(f"템플릿 응답 사용: {response}")
             else:
                 # LLM 또는 DB 기반 응답
-                if input_type == InputType.TECHNICAL:
-                    # 전문 상담 처리
+                if input_type in [self.InputType.TECHNICAL, self.InputType.UNKNOWN]:
+                    # 전문 상담 처리 (unknown도 포함)
+                    logging.info(f"🔍 {input_type.value.upper()} 분류 감지 - 전문 상담 처리 시작")
                     response = await self._handle_technical_conversation(message)
+                    logging.info(f"✅ 전문 상담 처리 완료: {response[:100]}...")
                 else:
-                    # 일상 대화 처리
+                    # 일상 대화 처리 (casual만)
+                    logging.info("🔍 CASUAL 분류 감지 - 일상 대화 처리 시작")
                     response = await self._handle_casual_conversation(message)
+                    logging.info(f"✅ 일상 대화 처리 완료: {response[:100]}...")
             
             # 3. 자동화 처리 (대화 저장 및 knowledge_base 업데이트)
             automation_result = await self.automation_service.process_conversation_automation(
@@ -223,7 +224,7 @@ class ChatService:
             )
             
             # 4. 응답 포맷팅
-            formatted_response = await self._format_response(response)
+            formatted_response = await self._format_response(response, input_type)
             
             # 5. 처리 시간 기록
             end_time = time.time()
@@ -253,16 +254,35 @@ class ChatService:
     async def _handle_technical_conversation(self, message: str) -> str:
         """전문 상담 처리"""
         try:
+            logging.info("🔍 전문 상담 처리 시작")
+            
             # 기존 LLM 서비스 사용 (새로 생성하지 않음)
             from ..dependencies import get_llm_service
             llm_service = await get_llm_service()
+            logging.info("✅ LLM 서비스 가져오기 완료")
+            
+            # DB 서비스 상태 확인
+            if hasattr(llm_service, 'search_service') and llm_service.search_service:
+                logging.info("✅ DB 검색 서비스가 주입되어 있습니다.")
+            else:
+                logging.warning("❌ DB 검색 서비스가 주입되지 않았습니다. DB 모드로 재설정합니다.")
+                # DB 서비스 재주입
+                from ..dependencies import get_search_service
+                search_service = await get_search_service()
+                llm_service.inject_db_service(search_service)
+                llm_service.set_db_mode(True)
+                logging.info("✅ DB 검색 서비스 재주입 완료")
+            
+            # DB 검색 + LLM 강화
+            logging.info("🔍 search_and_enhance_answer 호출 시작")
             response = await llm_service.search_and_enhance_answer(message)
+            logging.info(f"✅ search_and_enhance_answer 완료: {response[:100]}...")
             return response
         except Exception as e:
             logging.error(f"전문 상담 처리 오류: {str(e)}")
             return "죄송합니다. 전문 상담사에게 문의해주세요."
 
-    async def _format_response(self, response: str) -> str:
+    async def _format_response(self, response: str, input_type=None) -> str:
         """응답 포맷팅"""
         try:
             if not response:
@@ -271,7 +291,12 @@ class ChatService:
             # 기본 포맷팅
             formatted = response.strip()
             
-            # 너무 긴 응답 자르기
+            # technical/unknown 분류일 때는 길이 제한 해제 (DB 답변 보존)
+            if input_type in [self.InputType.TECHNICAL, self.InputType.UNKNOWN]:
+                logging.info(f"✅ {input_type.value.upper()} 분류 - 응답 길이 제한 해제")
+                return formatted
+            
+            # 너무 긴 응답 자르기 (일상 대화에만 적용)
             if len(formatted) > 1000:
                 formatted = formatted[:1000] + "..."
             

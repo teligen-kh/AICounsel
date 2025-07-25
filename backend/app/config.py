@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     ENABLE_HYBRID_RESPONSE: bool = False
     
     # 문맥 인식 분류 모듈 활성화 여부 - 키워드+LLM 하이브리드 분류
-    ENABLE_CONTEXT_AWARE_CLASSIFICATION: bool = False
+    ENABLE_CONTEXT_AWARE_CLASSIFICATION: bool = True
     
     # DB 우선 모드 (True: DB 검색 우선, False: LLM 우선)
     DB_PRIORITY_MODE: bool = False

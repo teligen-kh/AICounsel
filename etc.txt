@@ -62,3 +62,14 @@ GPU 계획: AWS g4dn.xlarge로 0.5~1초 목표.
 DB 입력: knowledge_base와 input_keywords 초기 데이터 삽입.
 
 
+2025-07-25
+context_patterns 테이블의 pattern 을 보니 문제가 있어.
+"매장에 등록된 상품을 엑셀로 한번에 저장할숭 있나요" 라고 pattern 에 들어있는데 인지를 못하는이유가 pattern 의 내용들이 문제라고 생각해.
+
+pattern 의 내용들이 
+매장에 등록
+상품을 엑셀
+한번에 저장
+ 이런식으로 되어 있고 이런 형태의 문맥에 따라 분류가 이루어져야 하는데 이건 그냥  knowledge_base 테이블의 question 컬럼의 값을 기본으로 단어만 몇 개씩 바꾼 형태네.
+이렇게 잘못 등록되어  있으니 엉뚱한 답을 내놓는 거지.
+

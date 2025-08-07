@@ -43,6 +43,10 @@ async def lifespan(app: FastAPI):
         # 채팅 서비스 초기화
         from .dependencies import get_chat_service
         chat_service = await get_chat_service()
+        
+        # LLM 서비스를 ContextAwareClassifier에 주입
+        await chat_service.inject_llm_service()
+        
         logger.info("채팅 서비스 초기화 완료")
         
         # 서비스 초기화 완료

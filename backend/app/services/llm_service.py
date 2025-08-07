@@ -1,6 +1,5 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
-from langchain_mongodb import MongoDBChatMessageHistory
 from ..config import settings
 from .mongodb_search_service import MongoDBSearchService
 from .conversation_algorithm import ConversationAlgorithm
@@ -8,7 +7,7 @@ from .formatting_service import FormattingService
 from .model_manager import get_model_manager, ModelType
 from .llm_processors import LLMProcessorFactory, BaseLLMProcessor
 from .llama_cpp_processor import LlamaCppProcessor
-from .finetuned_processor import get_finetuned_processor
+# from .finetuned_processor import get_finetuned_processor  # 파인튜닝 모델 사용 시에만 활성화
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import os
 import logging
@@ -96,8 +95,9 @@ class LLMService:
     def _initialize_finetuned(self):
         """파인튜닝된 모델 초기화"""
         try:
-            self.finetuned_processor = get_finetuned_processor()
-            logging.info("✅ 파인튜닝된 모델 초기화 완료")
+            # from .finetuned_processor import get_finetuned_processor
+            # self.finetuned_processor = get_finetuned_processor()
+            logging.info("✅ 파인튜닝된 모델 초기화 완료 (현재 비활성화)")
         except Exception as e:
             logging.error(f"파인튜닝된 모델 초기화 실패: {str(e)}")
             raise
@@ -522,7 +522,7 @@ DB 답변: {db_answer}
             with torch.no_grad():
                 outputs = self.model.generate(
                     inputs.input_ids,
-                    max_new_tokens=500,         # 300 -> 500으로 증가 (완전한 답변 보장)
+                    max_new_tokens=1000,        # 500 -> 1000으로 증가 (완전한 답변 보장)
                     temperature=0.7,           # 자연스러움 유지
                     top_p=0.9,                 # 안정성
                     do_sample=True,

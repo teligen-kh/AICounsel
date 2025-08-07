@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # 문맥 인식 분류 모듈 활성화 여부 - 키워드+LLM 하이브리드 분류
     ENABLE_CONTEXT_AWARE_CLASSIFICATION: bool = True
     
+    # Clarification 모듈 활성화 여부 - 모호한 질문에 대한 추가 질문 생성
+    ENABLE_CLARIFICATION: bool = True
+    
     # DB 우선 모드 (True: DB 검색 우선, False: LLM 우선)
     DB_PRIORITY_MODE: bool = False
     
@@ -95,6 +98,8 @@ def enable_module(module_name: str):
         settings.ENABLE_HYBRID_RESPONSE = True
     elif module_name == "context_aware_classification":
         settings.ENABLE_CONTEXT_AWARE_CLASSIFICATION = True
+    elif module_name == "clarification":
+        settings.ENABLE_CLARIFICATION = True
     elif module_name == "db_priority":
         settings.DB_PRIORITY_MODE = True
     else:
@@ -123,6 +128,8 @@ def disable_module(module_name: str):
         settings.ENABLE_HYBRID_RESPONSE = False
     elif module_name == "context_aware_classification":
         settings.ENABLE_CONTEXT_AWARE_CLASSIFICATION = False
+    elif module_name == "clarification":
+        settings.ENABLE_CLARIFICATION = False
     elif module_name == "db_priority":
         settings.DB_PRIORITY_MODE = False
     else:
@@ -144,6 +151,7 @@ def get_module_status() -> dict:
         "enhanced_classification": settings.ENABLE_ENHANCED_CLASSIFICATION,
         "hybrid_response": settings.ENABLE_HYBRID_RESPONSE,
         "context_aware_classification": settings.ENABLE_CONTEXT_AWARE_CLASSIFICATION,
+        "clarification": settings.ENABLE_CLARIFICATION,
         "db_priority_mode": settings.DB_PRIORITY_MODE
     }
 

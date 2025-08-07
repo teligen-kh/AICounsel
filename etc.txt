@@ -5,6 +5,7 @@ venv_finetune\Scripts\activate
 teligen.kh@gmail.com
 @Telikh1205
 
+프론트엔드 및 백엔드 서버 실행해줘
 
 2025-07-22
 
@@ -73,3 +74,114 @@ pattern 의 내용들이
  이런식으로 되어 있고 이런 형태의 문맥에 따라 분류가 이루어져야 하는데 이건 그냥  knowledge_base 테이블의 question 컬럼의 값을 기본으로 단어만 몇 개씩 바꾼 형태네.
 이렇게 잘못 등록되어  있으니 엉뚱한 답을 내놓는 거지.
 
+
+
+2025-08-06
+우리는 모듈을 하나 만들거야.
+이 모둘의 목적은 고객의 질문이 technical에 속하는지를 구분해서 DB에 있는 정보를 검색해서 대답할지를 판단하는 거야
+만드는 과정은 다음과 같아.
+1. MongoDB의 knowledge_base 테이블 중 question 컬럼에 들어 있는 모든 문장을 가져와.
+2. LLM이 판단해서 technical 에 해당하는 단어들을 추출해.
+3. 현재  MongoDB의 context_patterns 테이블의 모든 데이터를 삭제해.
+4. 중복 제거를 하고 남은 단어들을 MongoDB의 context_patterns 테이블에 입력해
+5. 고객의 질문이 technical에 속하는지를 구분하는 방법은 고객의 질문에 context_patterns에 들어 있는 단어 2개 이상이 포함되면 technical 로 인식하는 모듈을 만들어.
+6.  technical 로 인식 되면 knowledge_base 테이블 중 question 컬럼의 내용 중 모듈에서 도출된 단어들을 동시에 들어 있는 내용들을 검색해서 결과를 가져온다. 
+
+단, 작업을 하다보면 문제가 발생할 수 있으니 우선  MongoDB의 knowledge_base 테이블 중 question 컬럼에 들어 있는 랜덤한 10개만 가져와서 테스트 후 1번 부터 전체 작업을 진행하자.
+
+
+�� 제안하는 접근 방법:
+1단계: 테스트용 모듈 생성
+랜덤 10개 질문으로 테스트하는 간단한 모듈 먼저 만들기
+LLM을 사용해서 technical 키워드 추출 기능 구현
+2단계: 전체 시스템 구축
+기존 코드를 활용하면서 새로운 요구사항 반영
+통합된 모듈로 정리
+3단계: 검색 로직 개선
+2개 이상 키워드 매칭 로직 강화
+context_patterns 기반 검색 최적화
+
+
+2025-08-07
+내가 만들고자 하는 프로세스는 다음과 같아.
+1. 고객의 질문 내용이 casual 혹은 profanity인지 확인
+2. 아니면 context_patterns 테이블의 pattern 에 속한 단어들이 있는지 확인.
+2-1. 없으면 non_counseling으로 분류
+2-2. 있으면 technical 판정
+3. 2번에서 추출된  context_patterns 테이블의 pattern 에 속한 단어들이 knowledge_base 테이블의 
+question 컬럼에 모두 들어 있는 데이터들을 찾음.
+4-1. 1개의 데이터가 나오면 그 내용을 LLM이 사람처럼 친절하고 가독성 있게 전달.   
+4-2. 2개 이상의 데이터가 나오면 LLM이 판단해서 가장 최적의 답변을  사람처럼 친절하고 가독성 있게 전달. 
+
+
+
+AI 상담 챗봇: Clarification 기능 확장 계획
+
+현재 상황
+구성: FastAPI(백엔드), Next.js(프론트엔드), MongoDB Atlas(DB), Rocket.Chat(채팅), Llama-3.1-8B-Instruct(AI 모델)
+
+DB 테이블:
+conversations: 고객-AI 대화 로그 (시간, 입력, 응답)
+knowledge_base: 표준 Q&A (예: 직인 삽입/삭제)
+input_keywords: 질문 분류 (casual, technical, non_counseling, profanity)
+context_patterns: technical 질문 판단 키워드
+
+프로세스:
+질문 분류 (casual/profanity/technical/non_counseling)
+technical 질문 → context_patterns 키워드로 knowledge_base 검색
+
+결과 처리:
+1개: LLM이 친절히 전달
+2개 이상: LLM이 최적 답변 선택
+(문제) 0개나 모호한 경우 → 부정확한 응답 가능
+
+확장 목표
+AI가 모호한 질문(예: "견적서 단위 바꾸고 싶어")에서 사람 상담사처럼 추가 질문(예: "상품코드는 뭐예요?")을 해서 맥락을 확정 후 정확한 답변 제공.
+
+확장 내용
+Clarification 로직 추가:
+조건: knowledge_base 검색 결과 0개이거나, 질문이 모호할 때(예: 키워드 부족, "이거" 같은 표현 포함)
+동작: LLM이 추가 질문을 생성해 고객에게 요청
+예시:
+고객: "견적서 단위 바꾸고 싶어"
+AI: "상품코드는 뭐예요? (예: M3100처럼)"
+고객 답변 후 → knowledge_base 재검색 → 정확한 답변 (예: "상품코드 정보관리에서 조회 후 수정 버튼 누르세요")
+
+LLM 프롬프트 개선:
+모호함 감지 및 질문 생성 지침 추가
+예: "질문이 불완전하면 추가 질문 생성. 공손하고 자연스럽게."
+
+제한 조건:
+최대 2-3회 질문으로 루프 방지
+모호함 지속 시 "더 자세히 말씀해주세요"로 마무리
+
+사용자 경험:
+고객이 추가 질문에 답하면, AI가 대화 맥락 유지하며 정확한 knowledge_base 답변 제공
+항상 친절하고 가독성 있는 응답 (예: "도움이 되셨나요?" 마무리)
+
+기대 효과
+정확성: 모호한 질문에서 잘못된 답변 감소
+자연스러움: 사람 상담사 같은 대화 흐름
+차별화: 단순 정보 전달 → 대화형 AI로 업그레이드
+
+
+확장을 위한 파일 변경 계획
+신규 추가 파일들:
+1. Clarification 관련 모듈
+2. 대화 맥락 관리 모듈
+3. 모호함 감지 모듈
+4. Clarification 관련 스크립트
+기존 파일 수정:
+1. chat_service.py (수정)
+2. context_aware_classifier.py (수정)
+3. mongodb_search_service.py (수정)
+4. llm_service.py (수정)
+5. database.py (수정)
+6. dependencies.py (수정)
+새로운 DB 컬렉션:
+conversation_contexts
+수정 원칙:
+기존 모듈은 최소한으로 수정
+새로운 기능은 별도 모듈로 분리
+기존 API 인터페이스는 유지
+새로운 기능은 옵션으로 활성화/비활성화 가능

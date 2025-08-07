@@ -30,6 +30,11 @@ export function Navbar() {
   const pathname = usePathname();
   const { user, isAuthenticated, logout } = useAuth();
 
+  // 채팅 페이지에서는 Navbar 숨기기
+  if (pathname === '/chat') {
+    return null;
+  }
+
   const navItems = [
     {
       name: '홈',

@@ -159,6 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    // 자동 로그인 정보는 유지 (사용자가 명시적으로 해제할 때만 삭제)
     dispatch({ type: 'LOGOUT' });
   };
 

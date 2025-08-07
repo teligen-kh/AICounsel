@@ -22,19 +22,20 @@ export function LoginForm() {
   useEffect(() => {
     // 자동 로그인 여부를 localStorage에서 불러오기
     const savedAutoLogin = localStorage.getItem('autoLogin');
-    if (savedAutoLogin === 'true') {
+    const savedEmail = localStorage.getItem('savedEmail');
+    const savedPassword = localStorage.getItem('savedPassword');
+    
+    console.log('자동 로그인 정보 확인:', { savedAutoLogin, savedEmail, savedPassword });
+    
+    if (savedAutoLogin === 'true' && savedEmail && savedPassword) {
       setAutoLogin(true);
-      
-      // 저장된 로그인 정보 불러오기
-      const savedEmail = localStorage.getItem('savedEmail');
-      const savedPassword = localStorage.getItem('savedPassword');
-      
-      if (savedEmail && savedPassword) {
-        setFormData({
-          email: savedEmail,
-          password: savedPassword,
-        });
-      }
+      setFormData({
+        email: savedEmail,
+        password: savedPassword,
+      });
+      console.log('자동 로그인 정보 로드 완료');
+    } else {
+      console.log('저장된 자동 로그인 정보가 없습니다');
     }
   }, []);
 
@@ -50,6 +51,9 @@ export function LoginForm() {
     // 자동 로그인 상태를 먼저 저장
     if (autoLogin) {
       localStorage.setItem('autoLogin', 'true');
+      // 이메일과 비밀번호 저장
+      localStorage.setItem('savedEmail', formData.email);
+      localStorage.setItem('savedPassword', formData.password);
     } else {
       localStorage.removeItem('autoLogin');
       // 자동 로그인 해제 시 저장된 정보도 삭제
@@ -65,6 +69,17 @@ export function LoginForm() {
       ...formData,
       [e.target.name]: e.target.value,
     });
+  };
+
+  const handleAutoLoginChange = (checked: boolean) => {
+    setAutoLogin(checked);
+    
+    if (!checked) {
+      // 자동 로그인 해제 시 저장된 정보 삭제
+      localStorage.removeItem('autoLogin');
+      localStorage.removeItem('savedEmail');
+      localStorage.removeItem('savedPassword');
+    }
   };
 
   return (
@@ -137,12 +152,12 @@ export function LoginForm() {
               name="autoLogin"
               type="checkbox"
               checked={autoLogin}
-              onChange={() => setAutoLogin(!autoLogin)}
+              onChange={(e) => handleAutoLoginChange(e.target.checked)}
               className="form-checkbox h-4 w-4 text-blue-600"
               disabled={isLoading}
             />
             <label htmlFor="autoLogin" className="text-sm text-gray-700 select-none">
-              자동 로그인
+              자동 로그인 (이메일과 비밀번호 저장)
             </label>
           </div>
           

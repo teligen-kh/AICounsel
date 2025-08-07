@@ -1,9 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Permission } from '@/types/auth';
 import { Loader2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -17,6 +18,14 @@ export function ProtectedRoute({
   fallback 
 }: ProtectedRouteProps) {
   const { user, isAuthenticated, isLoading } = useAuth();
+  const router = useRouter();
+
+  // 인증되지 않은 경우 로그인 페이지로 리다이렉트
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/auth');
+    }
+  }, [isLoading, isAuthenticated, router]);
 
   // 로딩 중일 때
   if (isLoading) {
@@ -30,13 +39,13 @@ export function ProtectedRoute({
     );
   }
 
-  // 인증되지 않은 경우
+  // 인증되지 않은 경우 (리다이렉트 중일 때는 로딩 표시)
   if (!isAuthenticated || !user) {
     return fallback || (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <h2 className="text-2xl font-bold text-gray-900">접근 권한이 없습니다</h2>
-          <p className="text-gray-600">로그인이 필요합니다.</p>
+        <div className="flex items-center space-x-2">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span>로그인 페이지로 이동 중...</span>
         </div>
       </div>
     );

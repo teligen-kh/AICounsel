@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Permission } from '@/types/auth';
 import { Button } from '@/components/ui/button';
@@ -19,7 +20,9 @@ import {
   Loader2,
   Settings,
   FileText,
-  Download
+  Download,
+  ArrowLeft,
+  Home
 } from 'lucide-react';
 
 interface Message {
@@ -36,6 +39,7 @@ export default function ChatPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId] = useState(`session-${Date.now()}`);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   const scrollToBottom = () => {
     if (scrollAreaRef.current) {
@@ -143,28 +147,36 @@ export default function ChatPage() {
 
   return (
     <ProtectedRoute requiredPermissions={[Permission.CHAT_ACCESS]}>
-      <div className="h-screen flex flex-col bg-gradient-to-br from-blue-50 via-white to-indigo-50">
+      <div className="h-screen flex flex-col bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden">
         {/* 헤더 */}
-        <div className="bg-white border-b border-gray-200 px-6 py-4">
+        <div className="bg-white border-b border-gray-200 px-4 py-3 flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push('/')}
+                className="p-2 h-8 w-8"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
               <div className="p-2 bg-blue-100 rounded-lg">
-                <MessageSquare className="h-6 w-6 text-blue-600" />
+                <MessageSquare className="h-5 w-5 text-blue-600" />
               </div>
               <div>
-                <h1 className="text-xl font-semibold text-gray-900">AI 상담사</h1>
-                <p className="text-sm text-gray-600">
+                <h1 className="text-lg font-semibold text-gray-900">AI 상담사</h1>
+                <p className="text-xs text-gray-600">
                   전문적인 상담 서비스를 제공합니다
                 </p>
               </div>
             </div>
             <div className="flex items-center space-x-2">
-              <Badge variant="secondary" className="bg-green-100 text-green-800">
+              <Badge variant="secondary" className="bg-green-100 text-green-800 text-xs">
                 온라인
               </Badge>
-              <Button variant="outline" size="sm" onClick={exportConversation}>
-                <Download className="h-4 w-4 mr-2" />
-                대화 내보내기
+              <Button variant="outline" size="sm" onClick={exportConversation} className="text-xs">
+                <Download className="h-3 w-3 mr-1" />
+                내보내기
               </Button>
             </div>
           </div>
@@ -172,17 +184,17 @@ export default function ChatPage() {
 
         {/* 메시지 영역 */}
         <div className="flex-1 overflow-hidden">
-          <ScrollArea className="h-full px-6 py-4" ref={scrollAreaRef}>
-            <div className="space-y-4 max-w-4xl mx-auto">
+          <div className="h-full overflow-y-auto px-4 py-3" ref={scrollAreaRef}>
+            <div className="space-y-4 max-w-4xl mx-auto pb-4">
               {messages.length === 0 && (
-                <div className="text-center py-12">
-                  <div className="p-4 bg-blue-100 rounded-full w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-                    <Bot className="h-8 w-8 text-blue-600" />
+                <div className="text-center py-8">
+                  <div className="p-3 bg-blue-100 rounded-full w-12 h-12 mx-auto mb-3 flex items-center justify-center">
+                    <Bot className="h-6 w-6 text-blue-600" />
                   </div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  <h3 className="text-base font-medium text-gray-900 mb-2">
                     AI 상담사와 대화를 시작하세요
                   </h3>
-                  <p className="text-gray-600 max-w-md mx-auto">
+                  <p className="text-gray-600 max-w-md mx-auto text-sm">
                     어떤 도움이 필요하신가요? 전문적인 상담 서비스를 제공해드리겠습니다.
                   </p>
                 </div>
@@ -193,32 +205,32 @@ export default function ChatPage() {
                   key={message.id}
                   className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div className={`flex items-start space-x-3 max-w-[80%] ${message.role === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                    <Avatar className={`h-8 w-8 ${message.role === 'user' ? 'bg-blue-500' : 'bg-gray-500'}`}>
+                  <div className={`flex items-start space-x-2 max-w-[85%] ${message.role === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                    <Avatar className={`h-6 w-6 ${message.role === 'user' ? 'bg-blue-500' : 'bg-gray-500'}`}>
                       <AvatarImage src="" />
-                      <AvatarFallback className="text-white text-sm">
-                        {message.role === 'user' ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+                      <AvatarFallback className="text-white text-xs">
+                        {message.role === 'user' ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
                       </AvatarFallback>
                     </Avatar>
                     
                     <div className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      <Card className={`${message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white'} shadow-sm`}>
-                        <CardContent className="p-4">
+                      <Card className={`${message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white'} shadow-sm max-w-full`}>
+                        <CardContent className="p-3">
                           {message.isTyping ? (
                             <div className="flex items-center space-x-2">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              <span className="text-sm">응답을 생성하고 있습니다...</span>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              <span className="text-xs">응답을 생성하고 있습니다...</span>
                             </div>
                           ) : (
-                            <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                            <div className="whitespace-pre-wrap text-sm leading-relaxed break-words">
                               {message.content}
                             </div>
                           )}
                         </CardContent>
                       </Card>
                       
-                      <div className={`flex items-center space-x-1 mt-2 text-xs text-gray-500 ${message.role === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                        <Clock className="h-3 w-3" />
+                      <div className={`flex items-center space-x-1 mt-1 text-xs text-gray-500 ${message.role === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                        <Clock className="h-2 w-2" />
                         <span>{formatTime(message.timestamp)}</span>
                       </div>
                     </div>
@@ -226,29 +238,29 @@ export default function ChatPage() {
                 </div>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         </div>
 
         {/* 입력 영역 */}
-        <div className="bg-white border-t border-gray-200 px-6 py-4">
+        <div className="bg-white border-t border-gray-200 px-4 py-3 flex-shrink-0">
           <div className="max-w-4xl mx-auto">
-            <div className="flex items-end space-x-3">
-              <div className="flex-1">
+            <div className="flex items-end space-x-2">
+              <div className="flex-1 min-w-0">
                 <Textarea
                   placeholder="메시지를 입력하세요... (Enter로 전송, Shift+Enter로 줄바꿈)"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyPress}
                   disabled={isLoading}
-                  className="min-h-[44px] resize-none"
+                  className="min-h-[40px] max-h-[120px] resize-none text-sm"
                   rows={1}
                 />
               </div>
               <Button
                 onClick={handleSend}
                 disabled={!input.trim() || isLoading}
-                size="lg"
-                className="px-6"
+                size="default"
+                className="px-4 h-[40px] flex-shrink-0"
               >
                 {isLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -258,13 +270,13 @@ export default function ChatPage() {
               </Button>
             </div>
             
-            <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-              <div className="flex items-center space-x-4">
-                <span>세션 ID: {sessionId.slice(-8)}</span>
+            <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center space-x-3">
+                <span>세션: {sessionId.slice(-6)}</span>
                 <span>메시지: {messages.filter(m => !m.isTyping).length}개</span>
               </div>
               <div className="flex items-center space-x-2">
-                <span>AI 상담사가 도움을 드릴 준비가 되었습니다</span>
+                <span className="text-green-600">AI 상담사 준비 완료</span>
               </div>
             </div>
           </div>
